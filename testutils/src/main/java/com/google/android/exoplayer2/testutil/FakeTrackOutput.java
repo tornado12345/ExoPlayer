@@ -15,7 +15,8 @@
  */
 package com.google.android.exoplayer2.testutil;
 
-import android.test.MoreAsserts;
+import static com.google.common.truth.Truth.assertThat;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
@@ -25,7 +26,6 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import junit.framework.Assert;
 
 /**
  * A fake {@link TrackOutput}.
@@ -36,7 +36,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
   private final ArrayList<Integer> sampleFlags;
   private final ArrayList<Integer> sampleStartOffsets;
   private final ArrayList<Integer> sampleEndOffsets;
-  private final ArrayList<byte[]> sampleEncryptionKeys;
+  private final ArrayList<CryptoData> cryptoDatas;
 
   private byte[] sampleData;
   public Format format;
@@ -47,7 +47,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
     sampleFlags = new ArrayList<>();
     sampleStartOffsets = new ArrayList<>();
     sampleEndOffsets = new ArrayList<>();
-    sampleEncryptionKeys = new ArrayList<>();
+    cryptoDatas = new ArrayList<>();
   }
 
   public void clear() {
@@ -56,7 +56,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
     sampleFlags.clear();
     sampleStartOffsets.clear();
     sampleEndOffsets.clear();
-    sampleEncryptionKeys.clear();
+    cryptoDatas.clear();
   }
 
   @Override
@@ -89,29 +89,24 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
 
   @Override
   public void sampleMetadata(long timeUs, @C.BufferFlags int flags, int size, int offset,
-      byte[] encryptionKey) {
+      CryptoData cryptoData) {
     sampleTimesUs.add(timeUs);
     sampleFlags.add(flags);
     sampleStartOffsets.add(sampleData.length - offset - size);
     sampleEndOffsets.add(sampleData.length - offset);
-    sampleEncryptionKeys.add(encryptionKey);
+    cryptoDatas.add(cryptoData);
   }
 
   public void assertSampleCount(int count) {
-    Assert.assertEquals(count, sampleTimesUs.size());
+    assertThat(sampleTimesUs).hasSize(count);
   }
 
-  public void assertSample(int index, byte[] data, long timeUs, int flags, byte[] encryptionKey) {
+  public void assertSample(int index, byte[] data, long timeUs, int flags, CryptoData cryptoData) {
     byte[] actualData = getSampleData(index);
-    MoreAsserts.assertEquals(data, actualData);
-    Assert.assertEquals(timeUs, (long) sampleTimesUs.get(index));
-    Assert.assertEquals(flags, (int) sampleFlags.get(index));
-    byte[] sampleEncryptionKey = sampleEncryptionKeys.get(index);
-    if (encryptionKey == null) {
-      Assert.assertEquals(null, sampleEncryptionKey);
-    } else {
-      MoreAsserts.assertEquals(encryptionKey, sampleEncryptionKey);
-    }
+    assertThat(actualData).isEqualTo(data);
+    assertThat(sampleTimesUs.get(index)).isEqualTo(timeUs);
+    assertThat(sampleFlags.get(index)).isEqualTo(flags);
+    assertThat(cryptoDatas.get(index)).isEqualTo(cryptoData);
   }
 
   public byte[] getSampleData(int index) {
@@ -120,18 +115,18 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
   }
 
   public void assertEquals(FakeTrackOutput expected) {
-    Assert.assertEquals(expected.format, format);
-    Assert.assertEquals(expected.sampleTimesUs.size(), sampleTimesUs.size());
-    MoreAsserts.assertEquals(expected.sampleData, sampleData);
+    assertThat(format).isEqualTo(expected.format);
+    assertThat(sampleTimesUs).hasSize(expected.sampleTimesUs.size());
+    assertThat(sampleData).isEqualTo(expected.sampleData);
     for (int i = 0; i < sampleTimesUs.size(); i++) {
-      Assert.assertEquals(expected.sampleTimesUs.get(i), sampleTimesUs.get(i));
-      Assert.assertEquals(expected.sampleFlags.get(i), sampleFlags.get(i));
-      Assert.assertEquals(expected.sampleStartOffsets.get(i), sampleStartOffsets.get(i));
-      Assert.assertEquals(expected.sampleEndOffsets.get(i), sampleEndOffsets.get(i));
-      if (expected.sampleEncryptionKeys.get(i) == null) {
-        Assert.assertNull(sampleEncryptionKeys.get(i));
+      assertThat(sampleTimesUs.get(i)).isEqualTo(expected.sampleTimesUs.get(i));
+      assertThat(sampleFlags.get(i)).isEqualTo(expected.sampleFlags.get(i));
+      assertThat(sampleStartOffsets.get(i)).isEqualTo(expected.sampleStartOffsets.get(i));
+      assertThat(sampleEndOffsets.get(i)).isEqualTo(expected.sampleEndOffsets.get(i));
+      if (expected.cryptoDatas.get(i) == null) {
+        assertThat(cryptoDatas.get(i)).isNull();
       } else {
-        MoreAsserts.assertEquals(expected.sampleEncryptionKeys.get(i), sampleEncryptionKeys.get(i));
+        assertThat(cryptoDatas.get(i)).isEqualTo(expected.cryptoDatas.get(i));
       }
     }
   }
@@ -165,6 +160,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
     }
     dumper.endBlock().endBlock();
 
+    dumper.add("total output bytes", sampleData.length);
     dumper.add("sample count", sampleTimesUs.size());
 
     for (int i = 0; i < sampleTimesUs.size(); i++) {
@@ -172,9 +168,10 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
           .add("time", sampleTimesUs.get(i))
           .add("flags", sampleFlags.get(i))
           .add("data", getSampleData(i));
-      byte[] key = sampleEncryptionKeys.get(i);
-      if (key != null) {
-        dumper.add("encryption key", key);
+      CryptoData cryptoData = cryptoDatas.get(i);
+      if (cryptoData != null) {
+        dumper.add("crypto mode", cryptoData.cryptoMode);
+        dumper.add("encryption key", cryptoData.encryptionKey);
       }
       dumper.endBlock();
     }

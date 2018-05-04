@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.ext.flac;
 
+import static com.google.android.exoplayer2.util.Util.getPcmEncoding;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.Extractor;
@@ -23,6 +25,7 @@ import com.google.android.exoplayer2.extractor.ExtractorOutput;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
 import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.extractor.SeekMap;
+import com.google.android.exoplayer2.extractor.SeekPoint;
 import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.util.FlacStreamInfo;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -67,7 +70,7 @@ public final class FlacExtractor implements Extractor {
   @Override
   public void init(ExtractorOutput output) {
     extractorOutput = output;
-    trackOutput = extractorOutput.track(0);
+    trackOutput = extractorOutput.track(0, C.TRACK_TYPE_AUDIO);
     extractorOutput.endTracks();
     try {
       decoderJni = new FlacDecoderJni();
@@ -95,37 +98,32 @@ public final class FlacExtractor implements Extractor {
         if (streamInfo == null) {
           throw new IOException("Metadata decoding failed");
         }
-      } catch (IOException e){
+      } catch (IOException e) {
         decoderJni.reset(0);
         input.setRetryPosition(0, e);
         throw e; // never executes
       }
       metadataParsed = true;
 
-      extractorOutput.seekMap(new SeekMap() {
-        final boolean isSeekable = decoderJni.getSeekPosition(0) != -1;
-        final long durationUs = streamInfo.durationUs();
-
-        @Override
-        public boolean isSeekable() {
-          return isSeekable;
-        }
-
-        @Override
-        public long getPosition(long timeUs) {
-          return isSeekable ? decoderJni.getSeekPosition(timeUs) : 0;
-        }
-
-        @Override
-        public long getDurationUs() {
-          return durationUs;
-        }
-
-      });
-
-      Format mediaFormat = Format.createAudioSampleFormat(null, MimeTypes.AUDIO_RAW, null,
-          streamInfo.bitRate(), Format.NO_VALUE, streamInfo.channels, streamInfo.sampleRate,
-          C.ENCODING_PCM_16BIT, null, null, 0, null);
+      boolean isSeekable = decoderJni.getSeekPosition(0) != -1;
+      extractorOutput.seekMap(
+          isSeekable
+              ? new FlacSeekMap(streamInfo.durationUs(), decoderJni)
+              : new SeekMap.Unseekable(streamInfo.durationUs(), 0));
+      Format mediaFormat =
+          Format.createAudioSampleFormat(
+              null,
+              MimeTypes.AUDIO_RAW,
+              null,
+              streamInfo.bitRate(),
+              streamInfo.maxDecodedFrameSize(),
+              streamInfo.channels,
+              streamInfo.sampleRate,
+              getPcmEncoding(streamInfo.bitsPerSample),
+              null,
+              null,
+              0,
+              null);
       trackOutput.format(mediaFormat);
 
       outputBuffer = new ParsableByteArray(streamInfo.maxDecodedFrameSize());
@@ -137,7 +135,7 @@ public final class FlacExtractor implements Extractor {
     int size;
     try {
       size = decoderJni.decodeSample(outputByteBuffer);
-    } catch (IOException e){
+    } catch (IOException e) {
       if (lastDecodePosition >= 0) {
         decoderJni.reset(lastDecodePosition);
         input.setRetryPosition(lastDecodePosition, e);
@@ -155,17 +153,47 @@ public final class FlacExtractor implements Extractor {
   }
 
   @Override
-  public void seek(long position) {
+  public void seek(long position, long timeUs) {
     if (position == 0) {
       metadataParsed = false;
     }
-    decoderJni.reset(position);
+    if (decoderJni != null) {
+      decoderJni.reset(position);
+    }
   }
 
   @Override
   public void release() {
-    decoderJni.release();
-    decoderJni = null;
+    if (decoderJni != null) {
+      decoderJni.release();
+      decoderJni = null;
+    }
   }
 
+  private static final class FlacSeekMap implements SeekMap {
+
+    private final long durationUs;
+    private final FlacDecoderJni decoderJni;
+
+    public FlacSeekMap(long durationUs, FlacDecoderJni decoderJni) {
+      this.durationUs = durationUs;
+      this.decoderJni = decoderJni;
+    }
+
+    @Override
+    public boolean isSeekable() {
+      return true;
+    }
+
+    @Override
+    public SeekPoints getSeekPoints(long timeUs) {
+      // TODO: Access the seek table via JNI to return two seek points when appropriate.
+      return new SeekPoints(new SeekPoint(timeUs, decoderJni.getSeekPosition(timeUs)));
+    }
+
+    @Override
+    public long getDurationUs() {
+      return durationUs;
+    }
+  }
 }

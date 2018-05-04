@@ -17,19 +17,31 @@ package com.google.android.exoplayer2.ext.flac;
 
 import android.test.InstrumentationTestCase;
 import com.google.android.exoplayer2.extractor.Extractor;
-import com.google.android.exoplayer2.testutil.TestUtil;
+import com.google.android.exoplayer2.testutil.ExtractorAsserts;
+import com.google.android.exoplayer2.testutil.ExtractorAsserts.ExtractorFactory;
 
 /**
  * Unit test for {@link FlacExtractor}.
  */
 public class FlacExtractorTest extends InstrumentationTestCase {
 
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    if (!FlacLibrary.isAvailable()) {
+      fail("Flac library not available.");
+    }
+  }
+
   public void testSample() throws Exception {
-    TestUtil.assertOutput(new TestUtil.ExtractorFactory() {
-      @Override
-      public Extractor create() {
-        return new FlacExtractor();
-      }
-    }, "bear.flac", getInstrumentation());
+    ExtractorAsserts.assertBehavior(
+        new ExtractorFactory() {
+          @Override
+          public Extractor create() {
+            return new FlacExtractor();
+          }
+        },
+        "bear.flac",
+        getInstrumentation().getContext());
   }
 }

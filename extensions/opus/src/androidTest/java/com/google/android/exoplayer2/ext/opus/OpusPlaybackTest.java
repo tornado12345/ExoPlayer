@@ -17,16 +17,16 @@ package com.google.android.exoplayer2.ext.opus;
 
 import android.content.Context;
 import android.net.Uri;
-import android.os.Handler;
 import android.os.Looper;
 import android.test.InstrumentationTestCase;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerFactory;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Renderer;
-import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.extractor.mkv.MatroskaExtractor;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
+import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory;
 
@@ -37,25 +37,35 @@ public class OpusPlaybackTest extends InstrumentationTestCase {
 
   private static final String BEAR_OPUS_URI = "asset:///bear-opus.webm";
 
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    if (!OpusLibrary.isAvailable()) {
+      fail("Opus library not available.");
+    }
+  }
+
   public void testBasicPlayback() throws ExoPlaybackException {
     playUri(BEAR_OPUS_URI);
   }
 
   private void playUri(String uri) throws ExoPlaybackException {
-    TestPlaybackThread thread = new TestPlaybackThread(Uri.parse(uri),
+    TestPlaybackRunnable testPlaybackRunnable = new TestPlaybackRunnable(Uri.parse(uri),
         getInstrumentation().getContext());
+    Thread thread = new Thread(testPlaybackRunnable);
     thread.start();
     try {
       thread.join();
     } catch (InterruptedException e) {
       fail(); // Should never happen.
     }
-    if (thread.playbackException != null) {
-      throw thread.playbackException;
+    if (testPlaybackRunnable.playbackException != null) {
+      throw testPlaybackRunnable.playbackException;
     }
   }
 
-  private static class TestPlaybackThread extends Thread implements ExoPlayer.EventListener {
+  private static class TestPlaybackRunnable extends Player.DefaultEventListener
+      implements Runnable {
 
     private final Context context;
     private final Uri uri;
@@ -63,7 +73,7 @@ public class OpusPlaybackTest extends InstrumentationTestCase {
     private ExoPlayer player;
     private ExoPlaybackException playbackException;
 
-    public TestPlaybackThread(Uri uri, Context context) {
+    public TestPlaybackRunnable(Uri uri, Context context) {
       this.uri = uri;
       this.context = context;
     }
@@ -72,33 +82,17 @@ public class OpusPlaybackTest extends InstrumentationTestCase {
     public void run() {
       Looper.prepare();
       LibopusAudioRenderer audioRenderer = new LibopusAudioRenderer();
-      DefaultTrackSelector trackSelector = new DefaultTrackSelector(new Handler());
+      DefaultTrackSelector trackSelector = new DefaultTrackSelector();
       player = ExoPlayerFactory.newInstance(new Renderer[] {audioRenderer}, trackSelector);
       player.addListener(this);
-      ExtractorMediaSource mediaSource = new ExtractorMediaSource(
-          uri,
-          new DefaultDataSourceFactory(context, "ExoPlayerExtOpusTest"),
-          MatroskaExtractor.FACTORY,
-          null,
-          null);
+      MediaSource mediaSource =
+          new ExtractorMediaSource.Factory(
+                  new DefaultDataSourceFactory(context, "ExoPlayerExtOpusTest"))
+              .setExtractorsFactory(MatroskaExtractor.FACTORY)
+              .createMediaSource(uri);
       player.prepare(mediaSource);
       player.setPlayWhenReady(true);
       Looper.loop();
-    }
-
-    @Override
-    public void onLoadingChanged(boolean isLoading) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onPositionDiscontinuity() {
-      // Do nothing.
-    }
-
-    @Override
-    public void onTimelineChanged(Timeline timeline, Object manifest) {
-      // Do nothing.
     }
 
     @Override
@@ -108,15 +102,11 @@ public class OpusPlaybackTest extends InstrumentationTestCase {
 
     @Override
     public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-      if (playbackState == ExoPlayer.STATE_ENDED
-          || (playbackState == ExoPlayer.STATE_IDLE && playbackException != null)) {
-        releasePlayerAndQuitLooper();
+      if (playbackState == Player.STATE_ENDED
+          || (playbackState == Player.STATE_IDLE && playbackException != null)) {
+        player.release();
+        Looper.myLooper().quit();
       }
-    }
-
-    private void releasePlayerAndQuitLooper() {
-      player.release();
-      Looper.myLooper().quit();
     }
 
   }

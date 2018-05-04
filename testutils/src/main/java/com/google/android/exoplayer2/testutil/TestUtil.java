@@ -15,44 +15,28 @@
  */
 package com.google.android.exoplayer2.testutil;
 
-import android.app.Instrumentation;
-import android.test.InstrumentationTestCase;
+import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
+
+import android.content.Context;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.extractor.Extractor;
-import com.google.android.exoplayer2.extractor.PositionHolder;
-import com.google.android.exoplayer2.extractor.SeekMap;
 import com.google.android.exoplayer2.testutil.FakeExtractorInput.SimulatedIOException;
+import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Random;
-import junit.framework.Assert;
-import org.mockito.MockitoAnnotations;
 
 /**
  * Utility methods for tests.
  */
 public class TestUtil {
 
-  /**
-   * A factory for {@link Extractor} instances.
-   */
-  public interface ExtractorFactory {
-    Extractor create();
-  }
-
-  private static final String DUMP_EXTENSION = ".dump";
-  private static final String UNKNOWN_LENGTH_EXTENSION = ".unklen" + DUMP_EXTENSION;
-
   private TestUtil() {}
-
-  public static boolean sniffTestData(Extractor extractor, byte[] data)
-      throws IOException, InterruptedException {
-    return sniffTestData(extractor, newExtractorInput(data));
-  }
 
   public static boolean sniffTestData(Extractor extractor, FakeExtractorInput input)
       throws IOException, InterruptedException {
@@ -65,57 +49,34 @@ public class TestUtil {
     }
   }
 
-  public static FakeExtractorOutput consumeTestData(Extractor extractor, byte[] data)
-      throws IOException, InterruptedException {
-    return consumeTestData(extractor, newExtractorInput(data));
-  }
-
-  public static FakeExtractorOutput consumeTestData(Extractor extractor, FakeExtractorInput input)
-      throws IOException, InterruptedException {
-    return consumeTestData(extractor, input, false);
-  }
-
-  public static FakeExtractorOutput consumeTestData(Extractor extractor, FakeExtractorInput input,
-      boolean retryFromStartIfLive) throws IOException, InterruptedException {
-    FakeExtractorOutput output = new FakeExtractorOutput();
-    extractor.init(output);
-    consumeTestData(extractor, input, output, retryFromStartIfLive);
-    return output;
-  }
-
-  private static void consumeTestData(Extractor extractor, FakeExtractorInput input,
-      FakeExtractorOutput output, boolean retryFromStartIfLive)
-      throws IOException, InterruptedException {
-    extractor.seek(input.getPosition());
-    PositionHolder seekPositionHolder = new PositionHolder();
-    int readResult = Extractor.RESULT_CONTINUE;
-    while (readResult != Extractor.RESULT_END_OF_INPUT) {
-      try {
-        // Extractor.read should not read seekPositionHolder.position. Set it to a value that's
-        // likely to cause test failure if a read does occur.
-        seekPositionHolder.position = Long.MIN_VALUE;
-        readResult = extractor.read(input, seekPositionHolder);
-        if (readResult == Extractor.RESULT_SEEK) {
-          long seekPosition = seekPositionHolder.position;
-          Assertions.checkState(0 <= seekPosition && seekPosition <= Integer.MAX_VALUE);
-          input.setPosition((int) seekPosition);
-        }
-      } catch (SimulatedIOException e) {
-        if (!retryFromStartIfLive) {
-          continue;
-        }
-        boolean isOnDemand = input.getLength() != C.LENGTH_UNSET
-            || (output.seekMap != null && output.seekMap.getDurationUs() != C.TIME_UNSET);
-        if (isOnDemand) {
-          continue;
-        }
-        input.setPosition(0);
-        for (int i = 0; i < output.numberOfTracks; i++) {
-          output.trackOutputs.valueAt(i).clear();
-        }
-        extractor.seek(0);
+  public static byte[] readToEnd(DataSource dataSource) throws IOException {
+    byte[] data = new byte[1024];
+    int position = 0;
+    int bytesRead = 0;
+    while (bytesRead != C.RESULT_END_OF_INPUT) {
+      if (position == data.length) {
+        data = Arrays.copyOf(data, data.length * 2);
+      }
+      bytesRead = dataSource.read(data, position, data.length - position);
+      if (bytesRead != C.RESULT_END_OF_INPUT) {
+        position += bytesRead;
       }
     }
+    return Arrays.copyOf(data, position);
+  }
+
+  public static byte[] readExactly(DataSource dataSource, int length) throws IOException {
+    byte[] data = new byte[length];
+    int position = 0;
+    while (position < length) {
+      int bytesRead = dataSource.read(data, position, data.length - position);
+      if (bytesRead == C.RESULT_END_OF_INPUT) {
+        fail("Not enough data could be read: " + position + " < " + length);
+      } else {
+        position += bytesRead;
+      }
+    }
+    return data;
   }
 
   public static byte[] buildTestData(int length) {
@@ -170,147 +131,39 @@ public class TestUtil {
     return joined;
   }
 
-  public static void setUpMockito(InstrumentationTestCase instrumentationTestCase) {
-    // Workaround for https://code.google.com/p/dexmaker/issues/detail?id=2.
-    System.setProperty("dexmaker.dexcache",
-        instrumentationTestCase.getInstrumentation().getTargetContext().getCacheDir().getPath());
-    MockitoAnnotations.initMocks(instrumentationTestCase);
+  public static byte[] getByteArray(Context context, String fileName) throws IOException {
+    return Util.toByteArray(getInputStream(context, fileName));
   }
 
-  public static boolean assetExists(Instrumentation instrumentation, String fileName)
-      throws IOException {
-    int i = fileName.lastIndexOf('/');
-    String path = i >= 0 ? fileName.substring(0, i) : "";
-    String file = i >= 0 ? fileName.substring(i + 1) : fileName;
-    return Arrays.asList(instrumentation.getContext().getResources().getAssets().list(path))
-        .contains(file);
+  public static InputStream getInputStream(Context context, String fileName) throws IOException {
+    return context.getResources().getAssets().open(fileName);
   }
 
-  public static byte[] getByteArray(Instrumentation instrumentation, String fileName)
-      throws IOException {
-    return Util.toByteArray(getInputStream(instrumentation, fileName));
-  }
-
-  public static InputStream getInputStream(Instrumentation instrumentation, String fileName)
-      throws IOException {
-    return instrumentation.getContext().getResources().getAssets().open(fileName);
-  }
-
-  public static String getString(Instrumentation instrumentation, String fileName)
-      throws IOException {
-    return new String(getByteArray(instrumentation, fileName));
-  }
-
-  private static FakeExtractorInput newExtractorInput(byte[] data) {
-    return new FakeExtractorInput.Builder().setData(data).build();
+  public static String getString(Context context, String fileName) throws IOException {
+    return new String(getByteArray(context, fileName));
   }
 
   /**
-   * Calls {@link #assertOutput(Extractor, String, byte[], Instrumentation, boolean, boolean,
-   * boolean)} with all possible combinations of "simulate" parameters.
+   * Asserts that data read from a {@link DataSource} matches {@code expected}.
    *
-   * @param factory An {@link ExtractorFactory} which creates instances of the {@link Extractor}
-   *     class which is to be tested.
-   * @param sampleFile The path to the input sample.
-   * @param instrumentation To be used to load the sample file.
-   * @throws IOException If reading from the input fails.
-   * @throws InterruptedException If interrupted while reading from the input.
-   * @see #assertOutput(Extractor, String, byte[], Instrumentation, boolean, boolean, boolean)
+   * @param dataSource The {@link DataSource} through which to read.
+   * @param dataSpec The {@link DataSpec} to use when opening the {@link DataSource}.
+   * @param expectedData The expected data.
+   * @param expectKnownLength Whether to assert that {@link DataSource#open} returns the expected
+   *     data length. If false then it's asserted that {@link C#LENGTH_UNSET} is returned.
+   * @throws IOException If an error occurs reading fom the {@link DataSource}.
    */
-  public static void assertOutput(ExtractorFactory factory, String sampleFile,
-      Instrumentation instrumentation) throws IOException, InterruptedException {
-    byte[] fileData = getByteArray(instrumentation, sampleFile);
-    assertOutput(factory, sampleFile, fileData, instrumentation);
-  }
-
-  /**
-   * Calls {@link #assertOutput(Extractor, String, byte[], Instrumentation, boolean, boolean,
-   * boolean)} with all possible combinations of "simulate" parameters.
-   *
-   * @param factory An {@link ExtractorFactory} which creates instances of the {@link Extractor}
-   *     class which is to be tested.
-   * @param sampleFile The path to the input sample.
-   * @param fileData Content of the input file.
-   * @param instrumentation To be used to load the sample file.
-   * @throws IOException If reading from the input fails.
-   * @throws InterruptedException If interrupted while reading from the input.
-   * @see #assertOutput(Extractor, String, byte[], Instrumentation, boolean, boolean, boolean)
-   */
-  public static void assertOutput(ExtractorFactory factory, String sampleFile, byte[] fileData,
-      Instrumentation instrumentation) throws IOException, InterruptedException {
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation, false, false, false);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation,  true, false, false);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation, false,  true, false);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation,  true,  true, false);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation, false, false,  true);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation,  true, false,  true);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation, false,  true,  true);
-    assertOutput(factory.create(), sampleFile, fileData, instrumentation,  true,  true,  true);
-  }
-
-  /**
-   * Asserts that {@code extractor} consumes {@code sampleFile} successfully and its output equals
-   * to a prerecorded output dump file with the name {@code sampleFile} + "{@value
-   * #DUMP_EXTENSION}". If {@code simulateUnknownLength} is true and {@code sampleFile} + "{@value
-   * #UNKNOWN_LENGTH_EXTENSION}" exists, it's preferred.
-   *
-   * @param extractor The {@link Extractor} to be tested.
-   * @param sampleFile The path to the input sample.
-   * @param fileData Content of the input file.
-   * @param instrumentation To be used to load the sample file.
-   * @param simulateIOErrors If true simulates IOErrors.
-   * @param simulateUnknownLength If true simulates unknown input length.
-   * @param simulatePartialReads If true simulates partial reads.
-   * @return The {@link FakeExtractorOutput} used in the test.
-   * @throws IOException If reading from the input fails.
-   * @throws InterruptedException If interrupted while reading from the input.
-   */
-  public static FakeExtractorOutput assertOutput(Extractor extractor, String sampleFile,
-      byte[] fileData, Instrumentation instrumentation, boolean simulateIOErrors,
-      boolean simulateUnknownLength, boolean simulatePartialReads) throws IOException,
-      InterruptedException {
-    FakeExtractorInput input = new FakeExtractorInput.Builder().setData(fileData)
-        .setSimulateIOErrors(simulateIOErrors)
-        .setSimulateUnknownLength(simulateUnknownLength)
-        .setSimulatePartialReads(simulatePartialReads).build();
-
-    Assert.assertTrue(sniffTestData(extractor, input));
-    input.resetPeekPosition();
-    FakeExtractorOutput extractorOutput = consumeTestData(extractor, input, true);
-
-    if (simulateUnknownLength
-        && assetExists(instrumentation, sampleFile + UNKNOWN_LENGTH_EXTENSION)) {
-      extractorOutput.assertOutput(instrumentation, sampleFile + UNKNOWN_LENGTH_EXTENSION);
-    } else {
-      extractorOutput.assertOutput(instrumentation, sampleFile + ".0" + DUMP_EXTENSION);
+  public static void assertDataSourceContent(
+      DataSource dataSource, DataSpec dataSpec, byte[] expectedData, boolean expectKnownLength)
+      throws IOException {
+    try {
+      long length = dataSource.open(dataSpec);
+      assertThat(length).isEqualTo(expectKnownLength ? expectedData.length : C.LENGTH_UNSET);
+      byte[] readData = readToEnd(dataSource);
+      assertThat(readData).isEqualTo(expectedData);
+    } finally {
+      dataSource.close();
     }
-
-    SeekMap seekMap = extractorOutput.seekMap;
-    if (seekMap.isSeekable()) {
-      long durationUs = seekMap.getDurationUs();
-      for (int j = 0; j < 4; j++) {
-        long timeUs = (durationUs * j) / 3;
-        long position = seekMap.getPosition(timeUs);
-        input.setPosition((int) position);
-        for (int i = 0; i < extractorOutput.numberOfTracks; i++) {
-          extractorOutput.trackOutputs.valueAt(i).clear();
-        }
-
-        consumeTestData(extractor, input, extractorOutput, false);
-        extractorOutput.assertOutput(instrumentation, sampleFile + '.' + j + DUMP_EXTENSION);
-      }
-    }
-
-    return extractorOutput;
-  }
-
-  public static void recursiveDelete(File fileOrDirectory) {
-    if (fileOrDirectory.isDirectory()) {
-      for (File child : fileOrDirectory.listFiles()) {
-        recursiveDelete(child);
-      }
-    }
-    fileOrDirectory.delete();
   }
 
 }

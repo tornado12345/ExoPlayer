@@ -15,10 +15,12 @@
  */
 package com.google.android.exoplayer2.ext.ffmpeg;
 
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.decoder.SimpleOutputBuffer;
 import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.android.exoplayer2.util.ParsableByteArray;
 import java.nio.ByteBuffer;
 import java.util.List;
 
@@ -28,11 +30,15 @@ import java.util.List;
 /* package */ final class FfmpegDecoder extends
     SimpleDecoder<DecoderInputBuffer, SimpleOutputBuffer, FfmpegDecoderException> {
 
-  // Space for 64 ms of 6 channel 48 kHz 16-bit PCM audio.
-  private static final int OUTPUT_BUFFER_SIZE = 1536 * 6 * 2 * 2;
+  // Space for 64 ms of 48 kHz 8 channel 16-bit PCM audio.
+  private static final int OUTPUT_BUFFER_SIZE_16BIT = 64 * 48  * 8 * 2;
+  // Space for 64 ms of 48 KhZ 8 channel 32-bit PCM audio.
+  private static final int OUTPUT_BUFFER_SIZE_32BIT = OUTPUT_BUFFER_SIZE_16BIT * 2;
 
   private final String codecName;
   private final byte[] extraData;
+  private final @C.Encoding int encoding;
+  private final int outputBufferSize;
 
   private long nativeContext; // May be reassigned on resetting the codec.
   private boolean hasOutputFormat;
@@ -40,14 +46,17 @@ import java.util.List;
   private volatile int sampleRate;
 
   public FfmpegDecoder(int numInputBuffers, int numOutputBuffers, int initialInputBufferSize,
-      String mimeType, List<byte[]> initializationData) throws FfmpegDecoderException {
+      String mimeType, List<byte[]> initializationData, boolean outputFloat)
+      throws FfmpegDecoderException {
     super(new DecoderInputBuffer[numInputBuffers], new SimpleOutputBuffer[numOutputBuffers]);
     if (!FfmpegLibrary.isAvailable()) {
       throw new FfmpegDecoderException("Failed to load decoder native libraries.");
     }
     codecName = FfmpegLibrary.getCodecName(mimeType);
     extraData = getExtraData(mimeType, initializationData);
-    nativeContext = ffmpegInitialize(codecName, extraData);
+    encoding = outputFloat ? C.ENCODING_PCM_FLOAT : C.ENCODING_PCM_16BIT;
+    outputBufferSize = outputFloat ? OUTPUT_BUFFER_SIZE_32BIT : OUTPUT_BUFFER_SIZE_16BIT;
+    nativeContext = ffmpegInitialize(codecName, extraData, outputFloat);
     if (nativeContext == 0) {
       throw new FfmpegDecoderException("Initialization failed.");
     }
@@ -60,18 +69,23 @@ import java.util.List;
   }
 
   @Override
-  public DecoderInputBuffer createInputBuffer() {
+  protected DecoderInputBuffer createInputBuffer() {
     return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT);
   }
 
   @Override
-  public SimpleOutputBuffer createOutputBuffer() {
+  protected SimpleOutputBuffer createOutputBuffer() {
     return new SimpleOutputBuffer(this);
   }
 
   @Override
-  public FfmpegDecoderException decode(DecoderInputBuffer inputBuffer,
-      SimpleOutputBuffer outputBuffer, boolean reset) {
+  protected FfmpegDecoderException createUnexpectedDecodeException(Throwable error) {
+    return new FfmpegDecoderException("Unexpected decode error", error);
+  }
+
+  @Override
+  protected FfmpegDecoderException decode(
+      DecoderInputBuffer inputBuffer, SimpleOutputBuffer outputBuffer, boolean reset) {
     if (reset) {
       nativeContext = ffmpegReset(nativeContext, extraData);
       if (nativeContext == 0) {
@@ -80,14 +94,21 @@ import java.util.List;
     }
     ByteBuffer inputData = inputBuffer.data;
     int inputSize = inputData.limit();
-    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, OUTPUT_BUFFER_SIZE);
-    int result = ffmpegDecode(nativeContext, inputData, inputSize, outputData, OUTPUT_BUFFER_SIZE);
+    ByteBuffer outputData = outputBuffer.init(inputBuffer.timeUs, outputBufferSize);
+    int result = ffmpegDecode(nativeContext, inputData, inputSize, outputData, outputBufferSize);
     if (result < 0) {
       return new FfmpegDecoderException("Error decoding (see logcat). Code: " + result);
     }
     if (!hasOutputFormat) {
       channelCount = ffmpegGetChannelCount(nativeContext);
       sampleRate = ffmpegGetSampleRate(nativeContext);
+      if (sampleRate == 0 && "alac".equals(codecName)) {
+        // ALAC decoder did not set the sample rate in earlier versions of FFMPEG.
+        // See https://trac.ffmpeg.org/ticket/6096
+        ParsableByteArray parsableExtraData = new ParsableByteArray(extraData);
+        parsableExtraData.setPosition(extraData.length - 4);
+        sampleRate = parsableExtraData.readUnsignedIntToInt();
+      }
       hasOutputFormat = true;
     }
     outputBuffer.data.position(0);
@@ -117,12 +138,20 @@ import java.util.List;
   }
 
   /**
+   * Returns the encoding of output audio.
+   */
+  public @C.Encoding int getEncoding() {
+    return encoding;
+  }
+
+  /**
    * Returns FFmpeg-compatible codec-specific initialization data ("extra data"), or {@code null} if
    * not required.
    */
   private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
     switch (mimeType) {
       case MimeTypes.AUDIO_AAC:
+      case MimeTypes.AUDIO_ALAC:
       case MimeTypes.AUDIO_OPUS:
         return initializationData.get(0);
       case MimeTypes.AUDIO_VORBIS:
@@ -144,7 +173,7 @@ import java.util.List;
     }
   }
 
-  private native long ffmpegInitialize(String codecName, byte[] extraData);
+  private native long ffmpegInitialize(String codecName, byte[] extraData, boolean outputFloat);
   private native int ffmpegDecode(long context, ByteBuffer inputData, int inputSize,
       ByteBuffer outputData, int outputSize);
   private native int ffmpegGetChannelCount(long context);
