@@ -15,18 +15,19 @@
  */
 package com.google.android.exoplayer2;
 
-import android.util.Log;
 import com.google.android.exoplayer2.source.ClippingMediaPeriod;
 import com.google.android.exoplayer2.source.EmptySampleStream;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.SampleStream;
+import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 
 /** Holds a {@link MediaPeriod} with information required to play it as part of a timeline. */
 /* package */ final class MediaPeriodHolder {
@@ -38,17 +39,18 @@ import com.google.android.exoplayer2.util.Assertions;
   public final SampleStream[] sampleStreams;
   public final boolean[] mayRetainStreamFlags;
 
-  public long rendererPositionOffsetUs;
   public boolean prepared;
   public boolean hasEnabledTracks;
   public MediaPeriodInfo info;
   public MediaPeriodHolder next;
+  public TrackGroupArray trackGroups;
   public TrackSelectorResult trackSelectorResult;
 
   private final RendererCapabilities[] rendererCapabilities;
   private final TrackSelector trackSelector;
   private final MediaSource mediaSource;
 
+  private long rendererPositionOffsetUs;
   private TrackSelectorResult periodTrackSelectorResult;
 
   /**
@@ -60,7 +62,6 @@ import com.google.android.exoplayer2.util.Assertions;
    * @param trackSelector The track selector.
    * @param allocator The allocator.
    * @param mediaSource The media source that produced the media period.
-   * @param uid The unique identifier for the containing timeline period.
    * @param info Information used to identify this media period in its timeline period.
    */
   public MediaPeriodHolder(
@@ -69,21 +70,23 @@ import com.google.android.exoplayer2.util.Assertions;
       TrackSelector trackSelector,
       Allocator allocator,
       MediaSource mediaSource,
-      Object uid,
       MediaPeriodInfo info) {
     this.rendererCapabilities = rendererCapabilities;
     this.rendererPositionOffsetUs = rendererPositionOffsetUs - info.startPositionUs;
     this.trackSelector = trackSelector;
     this.mediaSource = mediaSource;
-    this.uid = Assertions.checkNotNull(uid);
+    this.uid = Assertions.checkNotNull(info.id.periodUid);
     this.info = info;
     sampleStreams = new SampleStream[rendererCapabilities.length];
     mayRetainStreamFlags = new boolean[rendererCapabilities.length];
-    MediaPeriod mediaPeriod = mediaSource.createPeriod(info.id, allocator);
-    if (info.endPositionUs != C.TIME_END_OF_SOURCE) {
-      ClippingMediaPeriod clippingMediaPeriod = new ClippingMediaPeriod(mediaPeriod, true);
-      clippingMediaPeriod.setClipping(0, info.endPositionUs);
-      mediaPeriod = clippingMediaPeriod;
+    MediaPeriod mediaPeriod = mediaSource.createPeriod(info.id, allocator, info.startPositionUs);
+    if (info.id.endPositionUs != C.TIME_END_OF_SOURCE) {
+      mediaPeriod =
+          new ClippingMediaPeriod(
+              mediaPeriod,
+              /* enableInitialDiscontinuity= */ true,
+              /* startUs= */ 0,
+              info.id.endPositionUs);
     }
     this.mediaPeriod = mediaPeriod;
   }
@@ -100,6 +103,10 @@ import com.google.android.exoplayer2.util.Assertions;
     return rendererPositionOffsetUs;
   }
 
+  public long getStartPositionRendererTime() {
+    return info.startPositionUs + rendererPositionOffsetUs;
+  }
+
   public boolean isFullyBuffered() {
     return prepared
         && (!hasEnabledTracks || mediaPeriod.getBufferedPositionUs() == C.TIME_END_OF_SOURCE);
@@ -110,35 +117,31 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   /**
-   * Returns the buffered position in microseconds. If the period is buffered to the end then
-   * {@link C#TIME_END_OF_SOURCE} is returned unless {@code convertEosToDuration} is true, in which
-   * case the period duration is returned.
+   * Returns the buffered position in microseconds. If the period is buffered to the end, then the
+   * period duration is returned.
    *
-   * @param convertEosToDuration Whether to return the period duration rather than
-   *     {@link C#TIME_END_OF_SOURCE} if the period is fully buffered.
    * @return The buffered position in microseconds.
    */
-  public long getBufferedPositionUs(boolean convertEosToDuration) {
+  public long getBufferedPositionUs() {
     if (!prepared) {
       return info.startPositionUs;
     }
-    long bufferedPositionUs = mediaPeriod.getBufferedPositionUs();
-    return bufferedPositionUs == C.TIME_END_OF_SOURCE && convertEosToDuration
-        ? info.durationUs
-        : bufferedPositionUs;
+    long bufferedPositionUs =
+        hasEnabledTracks ? mediaPeriod.getBufferedPositionUs() : C.TIME_END_OF_SOURCE;
+    return bufferedPositionUs == C.TIME_END_OF_SOURCE ? info.durationUs : bufferedPositionUs;
   }
 
   public long getNextLoadPositionUs() {
     return !prepared ? 0 : mediaPeriod.getNextLoadPositionUs();
   }
 
-  public TrackSelectorResult handlePrepared(float playbackSpeed) throws ExoPlaybackException {
+  public void handlePrepared(float playbackSpeed) throws ExoPlaybackException {
     prepared = true;
+    trackGroups = mediaPeriod.getTrackGroups();
     selectTracks(playbackSpeed);
     long newStartPositionUs = applyTrackSelection(info.startPositionUs, false);
     rendererPositionOffsetUs += info.startPositionUs - newStartPositionUs;
     info = info.copyWithStartPositionUs(newStartPositionUs);
-    return trackSelectorResult;
   }
 
   public void reevaluateBuffer(long rendererPositionUs) {
@@ -154,7 +157,7 @@ import com.google.android.exoplayer2.util.Assertions;
 
   public boolean selectTracks(float playbackSpeed) throws ExoPlaybackException {
     TrackSelectorResult selectorResult =
-        trackSelector.selectTracks(rendererCapabilities, mediaPeriod.getTrackGroups());
+        trackSelector.selectTracks(rendererCapabilities, trackGroups);
     if (selectorResult.isEquivalent(periodTrackSelectorResult)) {
       return false;
     }
@@ -174,8 +177,7 @@ import com.google.android.exoplayer2.util.Assertions;
 
   public long applyTrackSelection(
       long positionUs, boolean forceRecreateStreams, boolean[] streamResetFlags) {
-    TrackSelectionArray trackSelections = trackSelectorResult.selections;
-    for (int i = 0; i < trackSelections.length; i++) {
+    for (int i = 0; i < trackSelectorResult.length; i++) {
       mayRetainStreamFlags[i] =
           !forceRecreateStreams && trackSelectorResult.isEquivalent(periodTrackSelectorResult, i);
     }
@@ -185,6 +187,7 @@ import com.google.android.exoplayer2.util.Assertions;
     disassociateNoSampleRenderersWithEmptySampleStream(sampleStreams);
     updatePeriodTrackSelectorResult(trackSelectorResult);
     // Disable streams on the period and get new streams for updated/newly-enabled tracks.
+    TrackSelectionArray trackSelections = trackSelectorResult.selections;
     positionUs =
         mediaPeriod.selectTracks(
             trackSelections.getAll(),
@@ -198,7 +201,7 @@ import com.google.android.exoplayer2.util.Assertions;
     hasEnabledTracks = false;
     for (int i = 0; i < sampleStreams.length; i++) {
       if (sampleStreams[i] != null) {
-        Assertions.checkState(trackSelectorResult.renderersEnabled[i]);
+        Assertions.checkState(trackSelectorResult.isRendererEnabled(i));
         // hasEnabledTracks should be true only when non-empty streams exists.
         if (rendererCapabilities[i].getTrackType() != C.TRACK_TYPE_NONE) {
           hasEnabledTracks = true;
@@ -213,7 +216,7 @@ import com.google.android.exoplayer2.util.Assertions;
   public void release() {
     updatePeriodTrackSelectorResult(null);
     try {
-      if (info.endPositionUs != C.TIME_END_OF_SOURCE) {
+      if (info.id.endPositionUs != C.TIME_END_OF_SOURCE) {
         mediaSource.releasePeriod(((ClippingMediaPeriod) mediaPeriod).mediaPeriod);
       } else {
         mediaSource.releasePeriod(mediaPeriod);
@@ -235,8 +238,8 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   private void enableTrackSelectionsInResult(TrackSelectorResult trackSelectorResult) {
-    for (int i = 0; i < trackSelectorResult.renderersEnabled.length; i++) {
-      boolean rendererEnabled = trackSelectorResult.renderersEnabled[i];
+    for (int i = 0; i < trackSelectorResult.length; i++) {
+      boolean rendererEnabled = trackSelectorResult.isRendererEnabled(i);
       TrackSelection trackSelection = trackSelectorResult.selections.get(i);
       if (rendererEnabled && trackSelection != null) {
         trackSelection.enable();
@@ -245,8 +248,8 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   private void disableTrackSelectionsInResult(TrackSelectorResult trackSelectorResult) {
-    for (int i = 0; i < trackSelectorResult.renderersEnabled.length; i++) {
-      boolean rendererEnabled = trackSelectorResult.renderersEnabled[i];
+    for (int i = 0; i < trackSelectorResult.length; i++) {
+      boolean rendererEnabled = trackSelectorResult.isRendererEnabled(i);
       TrackSelection trackSelection = trackSelectorResult.selections.get(i);
       if (rendererEnabled && trackSelection != null) {
         trackSelection.disable();
@@ -273,7 +276,7 @@ import com.google.android.exoplayer2.util.Assertions;
   private void associateNoSampleRenderersWithEmptySampleStream(SampleStream[] sampleStreams) {
     for (int i = 0; i < rendererCapabilities.length; i++) {
       if (rendererCapabilities[i].getTrackType() == C.TRACK_TYPE_NONE
-          && trackSelectorResult.renderersEnabled[i]) {
+          && trackSelectorResult.isRendererEnabled(i)) {
         sampleStreams[i] = new EmptySampleStream();
       }
     }

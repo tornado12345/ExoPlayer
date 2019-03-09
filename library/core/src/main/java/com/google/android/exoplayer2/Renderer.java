@@ -15,21 +15,34 @@
  */
 package com.google.android.exoplayer2;
 
+import android.support.annotation.IntDef;
 import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.util.MediaClock;
 import java.io.IOException;
+import java.lang.annotation.Documented;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Renders media read from a {@link SampleStream}.
  *
  * <p>Internally, a renderer's lifecycle is managed by the owning {@link ExoPlayer}. The renderer is
- * transitioned through various states as the overall playback state changes. The valid state
- * transitions are shown below, annotated with the methods that are called during each transition.
+ * transitioned through various states as the overall playback state and enabled tracks change. The
+ * valid state transitions are shown below, annotated with the methods that are called during each
+ * transition.
  *
  * <p align="center"><img src="doc-files/renderer-states.svg" alt="Renderer state transitions">
  */
 public interface Renderer extends PlayerMessage.Target {
 
+  /**
+   * The renderer states. One of {@link #STATE_DISABLED}, {@link #STATE_ENABLED} or {@link
+   * #STATE_STARTED}.
+   */
+  @Documented
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({STATE_DISABLED, STATE_ENABLED, STATE_STARTED})
+  @interface State {}
   /**
    * The renderer is disabled.
    */
@@ -80,8 +93,10 @@ public interface Renderer extends PlayerMessage.Target {
   /**
    * Returns the current state of the renderer.
    *
-   * @return The current state (one of the {@code STATE_*} constants).
+   * @return The current state. One of {@link #STATE_DISABLED}, {@link #STATE_ENABLED} and {@link
+   *     #STATE_STARTED}.
    */
+  @State
   int getState();
 
   /**
@@ -181,6 +196,18 @@ public interface Renderer extends PlayerMessage.Target {
    * @throws ExoPlaybackException If an error occurs handling the reset.
    */
   void resetPosition(long positionUs) throws ExoPlaybackException;
+
+  /**
+   * Sets the operating rate of this renderer, where 1 is the default rate, 2 is twice the default
+   * rate, 0.5 is half the default rate and so on. The operating rate is a hint to the renderer of
+   * the speed at which playback will proceed, and may be used for resource planning.
+   *
+   * <p>The default implementation is a no-op.
+   *
+   * @param operatingRate The operating rate.
+   * @throws ExoPlaybackException If an error occurs handling the operating rate.
+   */
+  default void setOperatingRate(float operatingRate) throws ExoPlaybackException {}
 
   /**
    * Incrementally renders the {@link SampleStream}.

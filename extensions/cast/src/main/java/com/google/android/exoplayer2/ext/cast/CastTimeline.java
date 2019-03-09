@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.cast;
 
+import android.support.annotation.Nullable;
 import android.util.SparseIntArray;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Timeline;
@@ -31,8 +32,7 @@ import java.util.Map;
 /* package */ final class CastTimeline extends Timeline {
 
   public static final CastTimeline EMPTY_CAST_TIMELINE =
-      new CastTimeline(
-          Collections.<MediaQueueItem>emptyList(), Collections.<String, Long>emptyMap());
+      new CastTimeline(Collections.emptyList(), Collections.emptyMap());
 
   private final SparseIntArray idsToIndex;
   private final int[] ids;
@@ -73,12 +73,22 @@ import java.util.Map;
   }
 
   @Override
-  public Window getWindow(int windowIndex, Window window, boolean setIds,
-      long defaultPositionProjectionUs) {
+  public Window getWindow(
+      int windowIndex, Window window, boolean setTag, long defaultPositionProjectionUs) {
     long durationUs = durationsUs[windowIndex];
     boolean isDynamic = durationUs == C.TIME_UNSET;
-    return window.set(ids[windowIndex], C.TIME_UNSET, C.TIME_UNSET, !isDynamic, isDynamic,
-        defaultPositionsUs[windowIndex], durationUs, windowIndex, windowIndex, 0);
+    Object tag = setTag ? ids[windowIndex] : null;
+    return window.set(
+        tag,
+        /* presentationStartTimeMs= */ C.TIME_UNSET,
+        /* windowStartTimeMs= */ C.TIME_UNSET,
+        /* isSeekable= */ !isDynamic,
+        isDynamic,
+        defaultPositionsUs[windowIndex],
+        durationUs,
+        /* firstPeriodIndex= */ windowIndex,
+        /* lastPeriodIndex= */ windowIndex,
+        /* positionInFirstPeriodUs= */ 0);
   }
 
   @Override
@@ -97,10 +107,15 @@ import java.util.Map;
     return uid instanceof Integer ? idsToIndex.get((int) uid, C.INDEX_UNSET) : C.INDEX_UNSET;
   }
 
+  @Override
+  public Object getUidOfPeriod(int periodIndex) {
+    return ids[periodIndex];
+  }
+
   // equals and hashCode implementations.
 
   @Override
-  public boolean equals(Object other) {
+  public boolean equals(@Nullable Object other) {
     if (this == other) {
       return true;
     } else if (!(other instanceof CastTimeline)) {

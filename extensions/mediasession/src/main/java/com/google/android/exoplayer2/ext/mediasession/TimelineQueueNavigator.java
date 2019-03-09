@@ -39,6 +39,7 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
   public static final int DEFAULT_MAX_QUEUE_SIZE = 10;
 
   private final MediaSessionCompat mediaSession;
+  private final Timeline.Window window;
   protected final int maxQueueSize;
 
   private long activeQueueItemId;
@@ -68,37 +69,38 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
     this.mediaSession = mediaSession;
     this.maxQueueSize = maxQueueSize;
     activeQueueItemId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
+    window = new Timeline.Window();
   }
 
   /**
    * Gets the {@link MediaDescriptionCompat} for a given timeline window index.
    *
+   * @param player The current player.
    * @param windowIndex The timeline window index for which to provide a description.
    * @return A {@link MediaDescriptionCompat}.
    */
-  public abstract MediaDescriptionCompat getMediaDescription(int windowIndex);
+  public abstract MediaDescriptionCompat getMediaDescription(Player player, int windowIndex);
 
   @Override
   public long getSupportedQueueNavigatorActions(Player player) {
-    if (player == null || player.getCurrentTimeline().getWindowCount() < 2) {
+    if (player == null) {
       return 0;
     }
-    if (player.getRepeatMode() != Player.REPEAT_MODE_OFF) {
-      return PlaybackStateCompat.ACTION_SKIP_TO_NEXT | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-          | PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
+    Timeline timeline = player.getCurrentTimeline();
+    if (timeline.isEmpty() || player.isPlayingAd()) {
+      return 0;
     }
-
-    int currentWindowIndex = player.getCurrentWindowIndex();
-    long actions;
-    if (currentWindowIndex == 0) {
-      actions = PlaybackStateCompat.ACTION_SKIP_TO_NEXT;
-    } else if (currentWindowIndex == player.getCurrentTimeline().getWindowCount() - 1) {
-      actions = PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS;
-    } else {
-      actions = PlaybackStateCompat.ACTION_SKIP_TO_NEXT
-          | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS;
+    long actions = 0;
+    if (timeline.getWindowCount() > 1) {
+      actions |= PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
     }
-    return actions | PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
+    if (window.isSeekable || !window.isDynamic || player.hasPrevious()) {
+      actions |= PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS;
+    }
+    if (window.isDynamic || player.hasNext()) {
+      actions |= PlaybackStateCompat.ACTION_SKIP_TO_NEXT;
+    }
+    return actions;
   }
 
   @Override
@@ -124,22 +126,25 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
   @Override
   public void onSkipToPrevious(Player player) {
     Timeline timeline = player.getCurrentTimeline();
-    if (timeline.isEmpty()) {
+    if (timeline.isEmpty() || player.isPlayingAd()) {
       return;
     }
+    int windowIndex = player.getCurrentWindowIndex();
+    timeline.getWindow(windowIndex, window);
     int previousWindowIndex = player.getPreviousWindowIndex();
-    if (player.getCurrentPosition() > MAX_POSITION_FOR_SEEK_TO_PREVIOUS
-        || previousWindowIndex == C.INDEX_UNSET) {
-      player.seekTo(0);
-    } else {
+    if (previousWindowIndex != C.INDEX_UNSET
+        && (player.getCurrentPosition() <= MAX_POSITION_FOR_SEEK_TO_PREVIOUS
+            || (window.isDynamic && !window.isSeekable))) {
       player.seekTo(previousWindowIndex, C.TIME_UNSET);
+    } else {
+      player.seekTo(0);
     }
   }
 
   @Override
   public void onSkipToQueueItem(Player player, long id) {
     Timeline timeline = player.getCurrentTimeline();
-    if (timeline.isEmpty()) {
+    if (timeline.isEmpty() || player.isPlayingAd()) {
       return;
     }
     int windowIndex = (int) id;
@@ -151,12 +156,15 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
   @Override
   public void onSkipToNext(Player player) {
     Timeline timeline = player.getCurrentTimeline();
-    if (timeline.isEmpty()) {
+    if (timeline.isEmpty() || player.isPlayingAd()) {
       return;
     }
+    int windowIndex = player.getCurrentWindowIndex();
     int nextWindowIndex = player.getNextWindowIndex();
     if (nextWindowIndex != C.INDEX_UNSET) {
       player.seekTo(nextWindowIndex, C.TIME_UNSET);
+    } else if (timeline.getWindow(windowIndex, window).isDynamic) {
+      player.seekTo(windowIndex, C.TIME_UNSET);
     }
   }
 
@@ -174,7 +182,7 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
 
   private void publishFloatingQueueWindow(Player player) {
     if (player.getCurrentTimeline().isEmpty()) {
-      mediaSession.setQueue(Collections.<MediaSessionCompat.QueueItem>emptyList());
+      mediaSession.setQueue(Collections.emptyList());
       activeQueueItemId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
       return;
     }
@@ -185,7 +193,7 @@ public abstract class TimelineQueueNavigator implements MediaSessionConnector.Qu
         windowCount - queueSize);
     List<MediaSessionCompat.QueueItem> queue = new ArrayList<>();
     for (int i = startIndex; i < startIndex + queueSize; i++) {
-      queue.add(new MediaSessionCompat.QueueItem(getMediaDescription(i), i));
+      queue.add(new MediaSessionCompat.QueueItem(getMediaDescription(player, i), i));
     }
     mediaSession.setQueue(queue);
     activeQueueItemId = currentWindowIndex;

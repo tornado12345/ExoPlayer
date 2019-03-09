@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 The Android Open Source Project
+ * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,21 +24,21 @@ import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.source.DynamicConcatenatingMediaSource;
+import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.util.Util;
 import java.util.List;
 
 /**
- * A {@link MediaSessionConnector.QueueEditor} implementation based on the
- * {@link DynamicConcatenatingMediaSource}.
- * <p>
- * This class implements the {@link MediaSessionConnector.CommandReceiver} interface and handles
+ * A {@link MediaSessionConnector.QueueEditor} implementation based on the {@link
+ * ConcatenatingMediaSource}.
+ *
+ * <p>This class implements the {@link MediaSessionConnector.CommandReceiver} interface and handles
  * the {@link #COMMAND_MOVE_QUEUE_ITEM} to move a queue item instead of removing and inserting it.
  * This allows to move the currently playing window without interrupting playback.
  */
-public final class TimelineQueueEditor implements MediaSessionConnector.QueueEditor,
-    MediaSessionConnector.CommandReceiver {
+public final class TimelineQueueEditor
+    implements MediaSessionConnector.QueueEditor, MediaSessionConnector.CommandReceiver {
 
   public static final String COMMAND_MOVE_QUEUE_ITEM = "exo_move_window";
   public static final String EXTRA_FROM_INDEX = "from_index";
@@ -64,13 +64,6 @@ public final class TimelineQueueEditor implements MediaSessionConnector.QueueEdi
    * {@link MediaSessionConnector}.
    */
   public interface QueueDataAdapter {
-    /**
-     * Gets the {@link MediaDescriptionCompat} for a {@code position}.
-     *
-     * @param position The position in the queue for which to provide a description.
-     * @return A {@link MediaDescriptionCompat}.
-     */
-    MediaDescriptionCompat getMediaDescription(int position);
     /**
      * Adds a {@link MediaDescriptionCompat} at the given {@code position}.
      *
@@ -124,20 +117,21 @@ public final class TimelineQueueEditor implements MediaSessionConnector.QueueEdi
   private final QueueDataAdapter queueDataAdapter;
   private final MediaSourceFactory sourceFactory;
   private final MediaDescriptionEqualityChecker equalityChecker;
-  private final DynamicConcatenatingMediaSource queueMediaSource;
+  private final ConcatenatingMediaSource queueMediaSource;
 
   /**
    * Creates a new {@link TimelineQueueEditor} with a given mediaSourceFactory.
    *
    * @param mediaController A {@link MediaControllerCompat} to read the current queue.
-   * @param queueMediaSource The {@link DynamicConcatenatingMediaSource} to
-   *     manipulate.
+   * @param queueMediaSource The {@link ConcatenatingMediaSource} to manipulate.
    * @param queueDataAdapter A {@link QueueDataAdapter} to change the backing data.
    * @param sourceFactory The {@link MediaSourceFactory} to build media sources.
    */
-  public TimelineQueueEditor(@NonNull MediaControllerCompat mediaController,
-      @NonNull DynamicConcatenatingMediaSource queueMediaSource,
-      @NonNull QueueDataAdapter queueDataAdapter, @NonNull MediaSourceFactory sourceFactory) {
+  public TimelineQueueEditor(
+      @NonNull MediaControllerCompat mediaController,
+      @NonNull ConcatenatingMediaSource queueMediaSource,
+      @NonNull QueueDataAdapter queueDataAdapter,
+      @NonNull MediaSourceFactory sourceFactory) {
     this(mediaController, queueMediaSource, queueDataAdapter, sourceFactory,
         new MediaIdEqualityChecker());
   }
@@ -146,15 +140,16 @@ public final class TimelineQueueEditor implements MediaSessionConnector.QueueEdi
    * Creates a new {@link TimelineQueueEditor} with a given mediaSourceFactory.
    *
    * @param mediaController A {@link MediaControllerCompat} to read the current queue.
-   * @param queueMediaSource The {@link DynamicConcatenatingMediaSource} to
-   *     manipulate.
+   * @param queueMediaSource The {@link ConcatenatingMediaSource} to manipulate.
    * @param queueDataAdapter A {@link QueueDataAdapter} to change the backing data.
    * @param sourceFactory The {@link MediaSourceFactory} to build media sources.
    * @param equalityChecker The {@link MediaDescriptionEqualityChecker} to match queue items.
    */
-  public TimelineQueueEditor(@NonNull MediaControllerCompat mediaController,
-      @NonNull DynamicConcatenatingMediaSource queueMediaSource,
-      @NonNull QueueDataAdapter queueDataAdapter, @NonNull MediaSourceFactory sourceFactory,
+  public TimelineQueueEditor(
+      @NonNull MediaControllerCompat mediaController,
+      @NonNull ConcatenatingMediaSource queueMediaSource,
+      @NonNull QueueDataAdapter queueDataAdapter,
+      @NonNull MediaSourceFactory sourceFactory,
       @NonNull MediaDescriptionEqualityChecker equalityChecker) {
     this.mediaController = mediaController;
     this.queueMediaSource = queueMediaSource;
@@ -182,16 +177,11 @@ public final class TimelineQueueEditor implements MediaSessionConnector.QueueEdi
     List<MediaSessionCompat.QueueItem> queue = mediaController.getQueue();
     for (int i = 0; i < queue.size(); i++) {
       if (equalityChecker.equals(queue.get(i).getDescription(), description)) {
-        onRemoveQueueItemAt(player, i);
+        queueDataAdapter.remove(i);
+        queueMediaSource.removeMediaSource(i);
         return;
       }
     }
-  }
-
-  @Override
-  public void onRemoveQueueItemAt(Player player, int index) {
-    queueDataAdapter.remove(index);
-    queueMediaSource.removeMediaSource(index);
   }
 
   // CommandReceiver implementation.

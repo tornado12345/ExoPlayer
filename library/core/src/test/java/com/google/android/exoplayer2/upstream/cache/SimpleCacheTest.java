@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.upstream.cache;
 import static com.google.android.exoplayer2.C.LENGTH_UNSET;
 import static com.google.android.exoplayer2.util.Util.toByteArray;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static org.mockito.Mockito.doAnswer;
 
 import com.google.android.exoplayer2.C;
@@ -31,14 +32,11 @@ import java.util.NavigableSet;
 import java.util.Random;
 import java.util.Set;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
@@ -49,6 +47,7 @@ import org.robolectric.RuntimeEnvironment;
 public class SimpleCacheTest {
 
   private static final String KEY_1 = "key1";
+  private static final String KEY_2 = "key2";
 
   private File cacheDir;
 
@@ -111,31 +110,27 @@ public class SimpleCacheTest {
     SimpleCache simpleCache = getSimpleCache();
 
     assertThat(simpleCache.getContentLength(KEY_1)).isEqualTo(LENGTH_UNSET);
+
     simpleCache.setContentLength(KEY_1, 15);
     assertThat(simpleCache.getContentLength(KEY_1)).isEqualTo(15);
 
     simpleCache.startReadWrite(KEY_1, 0);
-
     addCache(simpleCache, KEY_1, 0, 15);
-
     simpleCache.setContentLength(KEY_1, 150);
     assertThat(simpleCache.getContentLength(KEY_1)).isEqualTo(150);
 
     addCache(simpleCache, KEY_1, 140, 10);
 
+    simpleCache.release();
+
     // Check if values are kept after cache is reloaded.
     SimpleCache simpleCache2 = getSimpleCache();
-    Set<String> keys = simpleCache.getKeys();
-    Set<String> keys2 = simpleCache2.getKeys();
-    assertThat(keys2).isEqualTo(keys);
-    for (String key : keys) {
-      assertThat(simpleCache2.getContentLength(key)).isEqualTo(simpleCache.getContentLength(key));
-      assertThat(simpleCache2.getCachedSpans(key)).isEqualTo(simpleCache.getCachedSpans(key));
-    }
+    assertThat(simpleCache2.getContentLength(KEY_1)).isEqualTo(150);
 
     // Removing the last span shouldn't cause the length be change next time cache loaded
     SimpleCacheSpan lastSpan = simpleCache2.startReadWrite(KEY_1, 145);
     simpleCache2.removeSpan(lastSpan);
+    simpleCache2.release();
     simpleCache2 = getSimpleCache();
     assertThat(simpleCache2.getContentLength(KEY_1)).isEqualTo(150);
   }
@@ -148,6 +143,7 @@ public class SimpleCacheTest {
     CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
     addCache(simpleCache, KEY_1, 0, 15);
     simpleCache.releaseHoleSpan(cacheSpan1);
+    simpleCache.release();
 
     // Reload cache
     simpleCache = getSimpleCache();
@@ -155,6 +151,40 @@ public class SimpleCacheTest {
     // read data back
     CacheSpan cacheSpan2 = simpleCache.startReadWrite(KEY_1, 0);
     assertCachedDataReadCorrect(cacheSpan2);
+  }
+
+  @Test
+  public void testReloadCacheWithoutRelease() throws Exception {
+    SimpleCache simpleCache = getSimpleCache();
+
+    // Write data for KEY_1.
+    CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
+    addCache(simpleCache, KEY_1, 0, 15);
+    simpleCache.releaseHoleSpan(cacheSpan1);
+    // Write and remove data for KEY_2.
+    CacheSpan cacheSpan2 = simpleCache.startReadWrite(KEY_2, 0);
+    addCache(simpleCache, KEY_2, 0, 15);
+    simpleCache.releaseHoleSpan(cacheSpan2);
+    simpleCache.removeSpan(simpleCache.getCachedSpans(KEY_2).first());
+
+    // Don't release the cache. This means the index file wont have been written to disk after the
+    // data for KEY_2 was removed. Move the cache instead, so we can reload it without failing the
+    // folder locking check.
+    File cacheDir2 = Util.createTempFile(RuntimeEnvironment.application, "ExoPlayerTest");
+    cacheDir2.delete();
+    cacheDir.renameTo(cacheDir2);
+
+    // Reload the cache from its new location.
+    simpleCache = new SimpleCache(cacheDir2, new NoOpCacheEvictor());
+
+    // Read data back for KEY_1.
+    CacheSpan cacheSpan3 = simpleCache.startReadWrite(KEY_1, 0);
+    assertCachedDataReadCorrect(cacheSpan3);
+
+    // Check the entry for KEY_2 was removed when the cache was reloaded.
+    assertThat(simpleCache.getCachedSpans(KEY_2)).isEmpty();
+
+    Util.recursiveDelete(cacheDir2);
   }
 
   @Test
@@ -166,6 +196,7 @@ public class SimpleCacheTest {
     CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
     addCache(simpleCache, KEY_1, 0, 15);
     simpleCache.releaseHoleSpan(cacheSpan1);
+    simpleCache.release();
 
     // Reload cache
     simpleCache = getEncryptedSimpleCache(key);
@@ -184,6 +215,7 @@ public class SimpleCacheTest {
     CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
     addCache(simpleCache, KEY_1, 0, 15);
     simpleCache.releaseHoleSpan(cacheSpan1);
+    simpleCache.release();
 
     // Reload cache
     byte[] key2 = "Foo12345Foo12345".getBytes(C.UTF8_NAME); // 128 bit key
@@ -203,6 +235,7 @@ public class SimpleCacheTest {
     CacheSpan cacheSpan1 = simpleCache.startReadWrite(KEY_1, 0);
     addCache(simpleCache, KEY_1, 0, 15);
     simpleCache.releaseHoleSpan(cacheSpan1);
+    simpleCache.release();
 
     // Reload cache
     simpleCache = getSimpleCache();
@@ -259,17 +292,17 @@ public class SimpleCacheTest {
     addCache(simpleCache, KEY_1, 0, 15);
 
     // Make index.store() throw exception from now on.
-    doAnswer(new Answer<Object>() {
-      @Override
-      public Object answer(InvocationOnMock invocation) throws Throwable {
-        throw new Cache.CacheException("SimpleCacheTest");
-      }
-    }).when(index).store();
+    doAnswer(
+            invocation -> {
+              throw new CacheException("SimpleCacheTest");
+            })
+        .when(index)
+        .store();
 
     // Adding more content will make LeastRecentlyUsedCacheEvictor evict previous content.
     try {
       addCache(simpleCache, KEY_1, 15, 15);
-      Assert.fail("Exception was expected");
+      assertWithMessage("Exception was expected").fail();
     } catch (CacheException e) {
       // do nothing.
     }
@@ -281,6 +314,40 @@ public class SimpleCacheTest {
     assertThat(cachedSpans).isNotEmpty();
     assertThat(cachedSpans).hasSize(1);
     assertThat(cachedSpans.pollFirst().position).isEqualTo(15);
+  }
+
+  @Test
+  public void testUsingReleasedSimpleCacheThrowsException() throws Exception {
+    SimpleCache simpleCache = new SimpleCache(cacheDir, new NoOpCacheEvictor());
+    simpleCache.release();
+
+    try {
+      simpleCache.startReadWriteNonBlocking(KEY_1, 0);
+      assertWithMessage("Exception was expected").fail();
+    } catch (RuntimeException e) {
+      // Expected. Do nothing.
+    }
+  }
+
+  @Test
+  public void testMultipleSimpleCacheWithSameCacheDirThrowsException() throws Exception {
+    new SimpleCache(cacheDir, new NoOpCacheEvictor());
+
+    try {
+      new SimpleCache(cacheDir, new NoOpCacheEvictor());
+      assertWithMessage("Exception was expected").fail();
+    } catch (IllegalStateException e) {
+      // Expected. Do nothing.
+    }
+  }
+
+  @Test
+  public void testMultipleSimpleCacheWithSameCacheDirDoesNotThrowsExceptionAfterRelease()
+      throws Exception {
+    SimpleCache simpleCache = new SimpleCache(cacheDir, new NoOpCacheEvictor());
+    simpleCache.release();
+
+    new SimpleCache(cacheDir, new NoOpCacheEvictor());
   }
 
   private SimpleCache getSimpleCache() {

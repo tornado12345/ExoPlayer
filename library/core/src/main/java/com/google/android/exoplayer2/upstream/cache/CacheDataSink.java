@@ -44,6 +44,7 @@ public final class CacheDataSink implements DataSink {
   private final long maxCacheFileSize;
   private final int bufferSize;
 
+  private boolean syncFileDescriptor;
   private DataSpec dataSpec;
   private File file;
   private OutputStream outputStream;
@@ -67,9 +68,9 @@ public final class CacheDataSink implements DataSink {
    * Constructs a CacheDataSink using the {@link #DEFAULT_BUFFER_SIZE}.
    *
    * @param cache The cache into which data should be written.
-   * @param maxCacheFileSize The maximum size of a cache file, in bytes. If the sink is opened for
-   *    a {@link DataSpec} whose size exceeds this value, then the data will be fragmented into
-   *    multiple cache files.
+   * @param maxCacheFileSize The maximum size of a cache file, in bytes. If the sink is opened for a
+   *     {@link DataSpec} whose size exceeds this value, then the data will be fragmented into
+   *     multiple cache files.
    */
   public CacheDataSink(Cache cache, long maxCacheFileSize) {
     this(cache, maxCacheFileSize, DEFAULT_BUFFER_SIZE);
@@ -77,16 +78,29 @@ public final class CacheDataSink implements DataSink {
 
   /**
    * @param cache The cache into which data should be written.
-   * @param maxCacheFileSize The maximum size of a cache file, in bytes. If the sink is opened for
-   *    a {@link DataSpec} whose size exceeds this value, then the data will be fragmented into
-   *    multiple cache files.
+   * @param maxCacheFileSize The maximum size of a cache file, in bytes. If the sink is opened for a
+   *     {@link DataSpec} whose size exceeds this value, then the data will be fragmented into
+   *     multiple cache files.
    * @param bufferSize The buffer size in bytes for writing to a cache file. A zero or negative
-   *    value disables buffering.
+   *     value disables buffering.
    */
   public CacheDataSink(Cache cache, long maxCacheFileSize, int bufferSize) {
     this.cache = Assertions.checkNotNull(cache);
     this.maxCacheFileSize = maxCacheFileSize;
     this.bufferSize = bufferSize;
+    syncFileDescriptor = true;
+  }
+
+  /**
+   * Sets whether file descriptors are synced when closing output streams.
+   *
+   * <p>This method is experimental, and will be renamed or removed in a future release. It should
+   * only be called before the renderer is used.
+   *
+   * @param syncFileDescriptor Whether file descriptors are synced when closing output streams.
+   */
+  public void experimental_setSyncFileDescriptor(boolean syncFileDescriptor) {
+    this.syncFileDescriptor = syncFileDescriptor;
   }
 
   @Override
@@ -170,7 +184,9 @@ public final class CacheDataSink implements DataSink {
     boolean success = false;
     try {
       outputStream.flush();
-      underlyingFileOutputStream.getFD().sync();
+      if (syncFileDescriptor) {
+        underlyingFileOutputStream.getFD().sync();
+      }
       success = true;
     } finally {
       Util.closeQuietly(outputStream);

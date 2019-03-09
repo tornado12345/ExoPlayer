@@ -15,7 +15,6 @@
  */
 package com.google.android.exoplayer2.upstream.cache;
 
-import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
@@ -80,6 +79,12 @@ public interface Cache {
   }
 
   /**
+   * Releases the cache. This method must be called when the cache is no longer required. The cache
+   * must not be used after calling this method.
+   */
+  void release();
+
+  /**
    * Registers a listener to listen for changes to a given key.
    *
    * <p>No guarantees are made about the thread or threads on which the listener is called, but it
@@ -90,7 +95,6 @@ public interface Cache {
    * @param listener The listener to add.
    * @return The current spans for the key.
    */
-  @NonNull
   NavigableSet<CacheSpan> addListener(String key, Listener listener);
 
   /**
@@ -107,7 +111,6 @@ public interface Cache {
    * @param key The key for which spans should be returned.
    * @return The spans for the key.
    */
-  @NonNull
   NavigableSet<CacheSpan> getCachedSpans(String key);
 
   /**
@@ -238,4 +241,23 @@ public interface Cache {
    *     com.google.android.exoplayer2.C#LENGTH_UNSET} otherwise.
    */
   long getContentLength(String key);
+
+  /**
+   * Applies {@code mutations} to the {@link ContentMetadata} for the given key. A new {@link
+   * CachedContent} is added if there isn't one already with the given key.
+   *
+   * @param key The cache key for the data.
+   * @param mutations Contains mutations to be applied to the metadata.
+   * @throws CacheException If an error is encountered.
+   */
+  void applyContentMetadataMutations(String key, ContentMetadataMutations mutations)
+      throws CacheException;
+
+  /**
+   * Returns a {@link ContentMetadata} for the given key.
+   *
+   * @param key The cache key for the data.
+   * @return A {@link ContentMetadata} for the given key.
+   */
+  ContentMetadata getContentMetadata(String key);
 }

@@ -15,10 +15,13 @@
  */
 package com.google.android.exoplayer2.trackselection;
 
+import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.ExoPlayerFactory;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.chunk.MediaChunk;
+import com.google.android.exoplayer2.source.chunk.MediaChunkIterator;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.Util;
@@ -35,8 +38,7 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
    */
   public static final class Factory implements TrackSelection.Factory {
 
-    private final BandwidthMeter bandwidthMeter;
-    private final int maxInitialBitrate;
+    private final @Nullable BandwidthMeter bandwidthMeter;
     private final int minDurationForQualityIncreaseMs;
     private final int maxDurationForQualityDecreaseMs;
     private final int minDurationToRetainAfterDiscardMs;
@@ -45,13 +47,9 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     private final long minTimeBetweenBufferReevaluationMs;
     private final Clock clock;
 
-    /**
-     * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
-     */
-    public Factory(BandwidthMeter bandwidthMeter) {
+    /** Creates an adaptive track selection factory with default parameters. */
+    public Factory() {
       this(
-          bandwidthMeter,
-          DEFAULT_MAX_INITIAL_BITRATE,
           DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
           DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
           DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS,
@@ -62,27 +60,44 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     }
 
     /**
-     * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
-     * @param maxInitialBitrate The maximum bitrate in bits per second that should be assumed
-     *     when a bandwidth estimate is unavailable.
-     * @param minDurationForQualityIncreaseMs The minimum duration of buffered data required for
-     *     the selected track to switch to one of higher quality.
-     * @param maxDurationForQualityDecreaseMs The maximum duration of buffered data required for
-     *     the selected track to switch to one of lower quality.
+     * @deprecated Use {@link #Factory()} instead. Custom bandwidth meter should be directly passed
+     *     to the player in {@link ExoPlayerFactory}.
+     */
+    @Deprecated
+    @SuppressWarnings("deprecation")
+    public Factory(BandwidthMeter bandwidthMeter) {
+      this(
+          bandwidthMeter,
+          DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
+          DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
+          DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS,
+          DEFAULT_BANDWIDTH_FRACTION,
+          DEFAULT_BUFFERED_FRACTION_TO_LIVE_EDGE_FOR_QUALITY_INCREASE,
+          DEFAULT_MIN_TIME_BETWEEN_BUFFER_REEVALUTATION_MS,
+          Clock.DEFAULT);
+    }
+
+    /**
+     * Creates an adaptive track selection factory.
+     *
+     * @param minDurationForQualityIncreaseMs The minimum duration of buffered data required for the
+     *     selected track to switch to one of higher quality.
+     * @param maxDurationForQualityDecreaseMs The maximum duration of buffered data required for the
+     *     selected track to switch to one of lower quality.
      * @param minDurationToRetainAfterDiscardMs When switching to a track of significantly higher
      *     quality, the selection may indicate that media already buffered at the lower quality can
      *     be discarded to speed up the switch. This is the minimum duration of media that must be
      *     retained at the lower quality.
      * @param bandwidthFraction The fraction of the available bandwidth that the selection should
-     *     consider available for use. Setting to a value less than 1 is recommended to account
-     *     for inaccuracies in the bandwidth estimator.
+     *     consider available for use. Setting to a value less than 1 is recommended to account for
+     *     inaccuracies in the bandwidth estimator.
      */
-    public Factory(BandwidthMeter bandwidthMeter, int maxInitialBitrate,
-        int minDurationForQualityIncreaseMs, int maxDurationForQualityDecreaseMs,
-        int minDurationToRetainAfterDiscardMs, float bandwidthFraction) {
+    public Factory(
+        int minDurationForQualityIncreaseMs,
+        int maxDurationForQualityDecreaseMs,
+        int minDurationToRetainAfterDiscardMs,
+        float bandwidthFraction) {
       this(
-          bandwidthMeter,
-          maxInitialBitrate,
           minDurationForQualityIncreaseMs,
           maxDurationForQualityDecreaseMs,
           minDurationToRetainAfterDiscardMs,
@@ -93,9 +108,31 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     }
 
     /**
-     * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
-     * @param maxInitialBitrate The maximum bitrate in bits per second that should be assumed when a
-     *     bandwidth estimate is unavailable.
+     * @deprecated Use {@link #Factory(int, int, int, float)} instead. Custom bandwidth meter should
+     *     be directly passed to the player in {@link ExoPlayerFactory}.
+     */
+    @Deprecated
+    @SuppressWarnings("deprecation")
+    public Factory(
+        BandwidthMeter bandwidthMeter,
+        int minDurationForQualityIncreaseMs,
+        int maxDurationForQualityDecreaseMs,
+        int minDurationToRetainAfterDiscardMs,
+        float bandwidthFraction) {
+      this(
+          bandwidthMeter,
+          minDurationForQualityIncreaseMs,
+          maxDurationForQualityDecreaseMs,
+          minDurationToRetainAfterDiscardMs,
+          bandwidthFraction,
+          DEFAULT_BUFFERED_FRACTION_TO_LIVE_EDGE_FOR_QUALITY_INCREASE,
+          DEFAULT_MIN_TIME_BETWEEN_BUFFER_REEVALUTATION_MS,
+          Clock.DEFAULT);
+    }
+
+    /**
+     * Creates an adaptive track selection factory.
+     *
      * @param minDurationForQualityIncreaseMs The minimum duration of buffered data required for the
      *     selected track to switch to one of higher quality.
      * @param maxDurationForQualityDecreaseMs The maximum duration of buffered data required for the
@@ -119,9 +156,33 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
      *     buffer reevaluation calls.
      * @param clock A {@link Clock}.
      */
+    @SuppressWarnings("deprecation")
     public Factory(
-        BandwidthMeter bandwidthMeter,
-        int maxInitialBitrate,
+        int minDurationForQualityIncreaseMs,
+        int maxDurationForQualityDecreaseMs,
+        int minDurationToRetainAfterDiscardMs,
+        float bandwidthFraction,
+        float bufferedFractionToLiveEdgeForQualityIncrease,
+        long minTimeBetweenBufferReevaluationMs,
+        Clock clock) {
+      this(
+          /* bandwidthMeter= */ null,
+          minDurationForQualityIncreaseMs,
+          maxDurationForQualityDecreaseMs,
+          minDurationToRetainAfterDiscardMs,
+          bandwidthFraction,
+          bufferedFractionToLiveEdgeForQualityIncrease,
+          minTimeBetweenBufferReevaluationMs,
+          clock);
+    }
+
+    /**
+     * @deprecated Use {@link #Factory(int, int, int, float, float, long, Clock)} instead. Custom
+     *     bandwidth meter should be directly passed to the player in {@link ExoPlayerFactory}.
+     */
+    @Deprecated
+    public Factory(
+        @Nullable BandwidthMeter bandwidthMeter,
         int minDurationForQualityIncreaseMs,
         int maxDurationForQualityDecreaseMs,
         int minDurationToRetainAfterDiscardMs,
@@ -130,7 +191,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
         long minTimeBetweenBufferReevaluationMs,
         Clock clock) {
       this.bandwidthMeter = bandwidthMeter;
-      this.maxInitialBitrate = maxInitialBitrate;
       this.minDurationForQualityIncreaseMs = minDurationForQualityIncreaseMs;
       this.maxDurationForQualityDecreaseMs = maxDurationForQualityDecreaseMs;
       this.minDurationToRetainAfterDiscardMs = minDurationToRetainAfterDiscardMs;
@@ -142,12 +202,15 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     }
 
     @Override
-    public AdaptiveTrackSelection createTrackSelection(TrackGroup group, int... tracks) {
+    public AdaptiveTrackSelection createTrackSelection(
+        TrackGroup group, BandwidthMeter bandwidthMeter, int... tracks) {
+      if (this.bandwidthMeter != null) {
+        bandwidthMeter = this.bandwidthMeter;
+      }
       return new AdaptiveTrackSelection(
           group,
           tracks,
           bandwidthMeter,
-          maxInitialBitrate,
           minDurationForQualityIncreaseMs,
           maxDurationForQualityDecreaseMs,
           minDurationToRetainAfterDiscardMs,
@@ -156,10 +219,8 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
           minTimeBetweenBufferReevaluationMs,
           clock);
     }
-
   }
 
-  public static final int DEFAULT_MAX_INITIAL_BITRATE = 800000;
   public static final int DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS = 10000;
   public static final int DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS = 25000;
   public static final int DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS = 25000;
@@ -168,7 +229,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   public static final long DEFAULT_MIN_TIME_BETWEEN_BUFFER_REEVALUTATION_MS = 2000;
 
   private final BandwidthMeter bandwidthMeter;
-  private final int maxInitialBitrate;
   private final long minDurationForQualityIncreaseUs;
   private final long maxDurationForQualityDecreaseUs;
   private final long minDurationToRetainAfterDiscardUs;
@@ -194,7 +254,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
         group,
         tracks,
         bandwidthMeter,
-        DEFAULT_MAX_INITIAL_BITRATE,
         DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
         DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
         DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS,
@@ -209,8 +268,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
    * @param tracks The indices of the selected tracks within the {@link TrackGroup}. Must not be
    *     empty. May be in any order.
    * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
-   * @param maxInitialBitrate The maximum bitrate in bits per second that should be assumed when a
-   *     bandwidth estimate is unavailable.
    * @param minDurationForQualityIncreaseMs The minimum duration of buffered data required for the
    *     selected track to switch to one of higher quality.
    * @param maxDurationForQualityDecreaseMs The maximum duration of buffered data required for the
@@ -237,7 +294,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
       TrackGroup group,
       int[] tracks,
       BandwidthMeter bandwidthMeter,
-      int maxInitialBitrate,
       long minDurationForQualityIncreaseMs,
       long maxDurationForQualityDecreaseMs,
       long minDurationToRetainAfterDiscardMs,
@@ -247,7 +303,6 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
       Clock clock) {
     super(group, tracks);
     this.bandwidthMeter = bandwidthMeter;
-    this.maxInitialBitrate = maxInitialBitrate;
     this.minDurationForQualityIncreaseUs = minDurationForQualityIncreaseMs * 1000L;
     this.maxDurationForQualityDecreaseUs = maxDurationForQualityDecreaseMs * 1000L;
     this.minDurationToRetainAfterDiscardUs = minDurationToRetainAfterDiscardMs * 1000L;
@@ -257,9 +312,11 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     this.minTimeBetweenBufferReevaluationMs = minTimeBetweenBufferReevaluationMs;
     this.clock = clock;
     playbackSpeed = 1f;
-    selectedIndex = determineIdealSelectedIndex(Long.MIN_VALUE);
     reason = C.SELECTION_REASON_INITIAL;
     lastBufferEvaluationMs = C.TIME_UNSET;
+    @SuppressWarnings("nullness:method.invocation.invalid")
+    int selectedIndex = determineIdealSelectedIndex(Long.MIN_VALUE);
+    this.selectedIndex = selectedIndex;
   }
 
   @Override
@@ -273,9 +330,14 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   }
 
   @Override
-  public void updateSelectedTrack(long playbackPositionUs, long bufferedDurationUs,
-      long availableDurationUs) {
+  public void updateSelectedTrack(
+      long playbackPositionUs,
+      long bufferedDurationUs,
+      long availableDurationUs,
+      List<? extends MediaChunk> queue,
+      MediaChunkIterator[] mediaChunkIterators) {
     long nowMs = clock.elapsedRealtime();
+
     // Stash the current selection, then make a new one.
     int currentSelectedIndex = selectedIndex;
     selectedIndex = determineIdealSelectedIndex(nowMs);
@@ -316,7 +378,7 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   }
 
   @Override
-  public Object getSelectionData() {
+  public @Nullable Object getSelectionData() {
     return null;
   }
 
@@ -369,9 +431,7 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
    *     Long#MIN_VALUE} to ignore blacklisting.
    */
   private int determineIdealSelectedIndex(long nowMs) {
-    long bitrateEstimate = bandwidthMeter.getBitrateEstimate();
-    long effectiveBitrate = bitrateEstimate == BandwidthMeter.NO_ESTIMATE
-        ? maxInitialBitrate : (long) (bitrateEstimate * bandwidthFraction);
+    long effectiveBitrate = (long) (bandwidthMeter.getBitrateEstimate() * bandwidthFraction);
     int lowestBitrateNonBlacklistedIndex = 0;
     for (int i = 0; i < length; i++) {
       if (nowMs == Long.MIN_VALUE || !isBlacklisted(i, nowMs)) {
@@ -393,5 +453,4 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
         ? (long) (availableDurationUs * bufferedFractionToLiveEdgeForQualityIncrease)
         : minDurationForQualityIncreaseUs;
   }
-
 }

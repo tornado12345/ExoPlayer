@@ -19,6 +19,8 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.extractor.mp4.TrackEncryptionBox;
+import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.ProtectionElement;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.StreamElement;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -35,7 +37,7 @@ import org.robolectric.RobolectricTestRunner;
 public class SsManifestTest {
 
   private static final ProtectionElement DUMMY_PROTECTION_ELEMENT =
-      new ProtectionElement(C.WIDEVINE_UUID, new byte[] {0, 1, 2});
+      new ProtectionElement(C.WIDEVINE_UUID, new byte[0], new TrackEncryptionBox[0]);
 
   @Test
   public void testCopy() throws Exception {
@@ -43,7 +45,8 @@ public class SsManifestTest {
     SsManifest sourceManifest =
         newSsManifest(newStreamElement("1", formats[0]), newStreamElement("2", formats[1]));
 
-    List<TrackKey> keys = Arrays.asList(new TrackKey(0, 0), new TrackKey(0, 2), new TrackKey(1, 0));
+    List<StreamKey> keys =
+        Arrays.asList(new StreamKey(0, 0), new StreamKey(0, 2), new StreamKey(1, 0));
     // Keys don't need to be in any particular order
     Collections.shuffle(keys, new Random(0));
 
@@ -62,9 +65,7 @@ public class SsManifestTest {
     SsManifest sourceManifest =
         newSsManifest(newStreamElement("1", formats[0]), newStreamElement("2", formats[1]));
 
-    List<TrackKey> keys = Arrays.asList(new TrackKey(1, 0));
-    // Keys don't need to be in any particular order
-    Collections.shuffle(keys, new Random(0));
+    List<StreamKey> keys = Collections.singletonList(new StreamKey(1, 0));
 
     SsManifest copyManifest = sourceManifest.copy(keys);
 
@@ -127,12 +128,19 @@ public class SsManifestTest {
         768,
         null,
         formats,
-        Collections.<Long>emptyList(),
+        Collections.emptyList(),
         0);
   }
 
   private static Format newFormat(String id) {
     return Format.createContainerFormat(
-        id, MimeTypes.VIDEO_MP4, MimeTypes.VIDEO_H264, null, Format.NO_VALUE, 0, null);
+        id,
+        /* label= */ null,
+        MimeTypes.VIDEO_MP4,
+        MimeTypes.VIDEO_H264,
+        /* codecs= */ null,
+        /* bitrate= */ Format.NO_VALUE,
+        /* selectionFlags= */ 0,
+        /* language= */ null);
   }
 }
