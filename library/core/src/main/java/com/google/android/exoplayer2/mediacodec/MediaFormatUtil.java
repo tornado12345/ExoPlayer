@@ -15,16 +15,14 @@
  */
 package com.google.android.exoplayer2.mediacodec;
 
-import android.annotation.TargetApi;
 import android.media.MediaFormat;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.video.ColorInfo;
 import java.nio.ByteBuffer;
 import java.util.List;
 
 /** Helper class for configuring {@link MediaFormat} instances. */
-@TargetApi(16)
 public final class MediaFormatUtil {
 
   private MediaFormatUtil() {}
@@ -85,7 +83,7 @@ public final class MediaFormatUtil {
    *
    * @param format The {@link MediaFormat} being configured.
    * @param key The key to set.
-   * @param value The {@link byte[]} that will be wrapped to obtain the value.
+   * @param value The byte array that will be wrapped to obtain the value.
    */
   public static void maybeSetByteBuffer(MediaFormat format, String key, @Nullable byte[] value) {
     if (value != null) {

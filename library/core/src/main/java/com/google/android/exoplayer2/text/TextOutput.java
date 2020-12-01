@@ -23,10 +23,9 @@ import java.util.List;
 public interface TextOutput {
 
   /**
-   * Called when there is a change in the {@link Cue}s.
+   * Called when there is a change in the {@link Cue Cues}.
    *
-   * @param cues The {@link Cue}s.
+   * @param cues The {@link Cue Cues}. May be empty.
    */
   void onCues(List<Cue> cues);
-
 }

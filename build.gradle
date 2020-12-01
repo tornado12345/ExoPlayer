@@ -17,26 +17,19 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.1.4'
-        classpath 'com.novoda:bintray-release:0.8.1'
-        classpath 'com.google.android.gms:strict-version-matcher-plugin:1.0.3'
-    }
-    // Workaround for the following test coverage issue. Remove when fixed:
-    // https://code.google.com/p/android/issues/detail?id=226070
-    configurations.all {
-        resolutionStrategy {
-            force 'org.jacoco:org.jacoco.report:0.7.4.201502262128'
-            force 'org.jacoco:org.jacoco.core:0.7.4.201502262128'
-        }
+        classpath 'com.android.tools.build:gradle:4.0.1'
+        classpath 'com.novoda:bintray-release:0.9.1'
+        classpath 'com.google.android.gms:strict-version-matcher-plugin:1.2.1'
     }
 }
 allprojects {
     repositories {
         google()
         jcenter()
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots" }
     }
     project.ext {
-        exoplayerPublishEnabled = true
+        exoplayerPublishEnabled = false
     }
     if (it.hasProperty('externalBuildDir')) {
         if (!new File(externalBuildDir).isAbsolute()) {
@@ -44,6 +37,7 @@ allprojects {
         }
         buildDir = "${externalBuildDir}/${project.name}"
     }
+    group = 'com.google.android.exoplayer'
 }
 
 apply from: 'javadoc_combined.gradle'

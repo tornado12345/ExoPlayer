@@ -17,11 +17,11 @@ package com.google.android.exoplayer2.ui.spherical;
 
 import android.content.Context;
 import android.graphics.PointF;
-import android.support.annotation.BinderThread;
-import android.support.annotation.Nullable;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
+import androidx.annotation.BinderThread;
+import androidx.annotation.Nullable;
 
 /**
  * Basic touch input system.
@@ -45,7 +45,7 @@ import android.view.View;
  * Mesh as the user moves their finger. However, that requires quaternion interpolation.
  */
 /* package */ class TouchTracker extends GestureDetector.SimpleOnGestureListener
-    implements View.OnTouchListener {
+    implements View.OnTouchListener, OrientationListener.Listener {
 
   /* package */ interface Listener {
     void onScrollChange(PointF scrollOffsetDegrees);
@@ -53,7 +53,7 @@ import android.view.View;
 
   // Touch input won't change the pitch beyond +/- 45 degrees. This reduces awkward situations
   // where the touch-based pitch and gyro-based pitch interact badly near the poles.
-  /*package*/ static final float MAX_PITCH_DEGREES = 45;
+  /* package */ static final float MAX_PITCH_DEGREES = 45;
 
   // With every touch event, update the accumulated degrees offset by the new pixel amount.
   private final PointF previousTouchPointPx = new PointF();
@@ -65,7 +65,7 @@ import android.view.View;
   // The conversion from touch to yaw & pitch requires compensating for device roll. This is set
   // on the sensor thread and read on the UI thread.
   private volatile float roll;
-  private @Nullable SingleTapListener singleTapListener;
+  @Nullable private SingleTapListener singleTapListener;
 
   @SuppressWarnings({
     "nullness:assignment.type.incompatible",
@@ -75,7 +75,7 @@ import android.view.View;
     this.listener = listener;
     this.pxPerDegrees = pxPerDegrees;
     gestureDetector = new GestureDetector(context, this);
-    roll = SphericalSurfaceView.UPRIGHT_ROLL;
+    roll = SphericalGLSurfaceView.UPRIGHT_ROLL;
   }
 
   public void setSingleTapListener(@Nullable SingleTapListener listener) {
@@ -131,8 +131,9 @@ import android.view.View;
     return false;
   }
 
+  @Override
   @BinderThread
-  public void setRoll(float roll) {
+  public void onOrientationChange(float[] deviceOrientationMatrix, float roll) {
     // We compensate for roll by rotating in the opposite direction.
     this.roll = -roll;
   }

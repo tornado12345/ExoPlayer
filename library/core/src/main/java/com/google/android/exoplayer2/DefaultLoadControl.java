@@ -15,12 +15,16 @@
  */
 package com.google.android.exoplayer2;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DefaultAllocator;
 import com.google.android.exoplayer2.util.Assertions;
-import com.google.android.exoplayer2.util.PriorityTaskManager;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 
 /**
@@ -32,12 +36,12 @@ public class DefaultLoadControl implements LoadControl {
    * The default minimum duration of media that the player will attempt to ensure is buffered at all
    * times, in milliseconds.
    */
-  public static final int DEFAULT_MIN_BUFFER_MS = 15000;
+  public static final int DEFAULT_MIN_BUFFER_MS = 50_000;
 
   /**
    * The default maximum duration of media that the player will attempt to buffer, in milliseconds.
    */
-  public static final int DEFAULT_MAX_BUFFER_MS = 50000;
+  public static final int DEFAULT_MAX_BUFFER_MS = 50_000;
 
   /**
    * The default duration of media that must be buffered for playback to start or resume following a
@@ -58,7 +62,7 @@ public class DefaultLoadControl implements LoadControl {
   public static final int DEFAULT_TARGET_BUFFER_BYTES = C.LENGTH_UNSET;
 
   /** The default prioritization of buffer time constraints over size constraints. */
-  public static final boolean DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS = true;
+  public static final boolean DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS = false;
 
   /** The default back buffer duration in milliseconds. */
   public static final int DEFAULT_BACK_BUFFER_DURATION_MS = 0;
@@ -66,31 +70,53 @@ public class DefaultLoadControl implements LoadControl {
   /** The default for whether the back buffer is retained from the previous keyframe. */
   public static final boolean DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME = false;
 
+  /** A default size in bytes for a video buffer. */
+  public static final int DEFAULT_VIDEO_BUFFER_SIZE = 2000 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
+  /** A default size in bytes for an audio buffer. */
+  public static final int DEFAULT_AUDIO_BUFFER_SIZE = 200 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
+  /** A default size in bytes for a text buffer. */
+  public static final int DEFAULT_TEXT_BUFFER_SIZE = 2 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
+  /** A default size in bytes for a metadata buffer. */
+  public static final int DEFAULT_METADATA_BUFFER_SIZE = 2 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
+  /** A default size in bytes for a camera motion buffer. */
+  public static final int DEFAULT_CAMERA_MOTION_BUFFER_SIZE = 2 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
+  /** A default size in bytes for a muxed buffer (e.g. containing video, audio and text). */
+  public static final int DEFAULT_MUXED_BUFFER_SIZE =
+      DEFAULT_VIDEO_BUFFER_SIZE + DEFAULT_AUDIO_BUFFER_SIZE + DEFAULT_TEXT_BUFFER_SIZE;
+
+  /**
+   * The buffer size in bytes that will be used as a minimum target buffer in all cases. This is
+   * also the default target buffer before tracks are selected.
+   */
+  public static final int DEFAULT_MIN_BUFFER_SIZE = 200 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+
   /** Builder for {@link DefaultLoadControl}. */
   public static final class Builder {
 
-    private DefaultAllocator allocator;
+    @Nullable private DefaultAllocator allocator;
     private int minBufferMs;
     private int maxBufferMs;
     private int bufferForPlaybackMs;
     private int bufferForPlaybackAfterRebufferMs;
     private int targetBufferBytes;
     private boolean prioritizeTimeOverSizeThresholds;
-    private PriorityTaskManager priorityTaskManager;
     private int backBufferDurationMs;
     private boolean retainBackBufferFromKeyframe;
-    private boolean createDefaultLoadControlCalled;
+    private boolean buildCalled;
 
     /** Constructs a new instance. */
     public Builder() {
-      allocator = null;
       minBufferMs = DEFAULT_MIN_BUFFER_MS;
       maxBufferMs = DEFAULT_MAX_BUFFER_MS;
       bufferForPlaybackMs = DEFAULT_BUFFER_FOR_PLAYBACK_MS;
       bufferForPlaybackAfterRebufferMs = DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS;
       targetBufferBytes = DEFAULT_TARGET_BUFFER_BYTES;
       prioritizeTimeOverSizeThresholds = DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS;
-      priorityTaskManager = null;
       backBufferDurationMs = DEFAULT_BACK_BUFFER_DURATION_MS;
       retainBackBufferFromKeyframe = DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME;
     }
@@ -100,10 +126,10 @@ public class DefaultLoadControl implements LoadControl {
      *
      * @param allocator The {@link DefaultAllocator}.
      * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
     public Builder setAllocator(DefaultAllocator allocator) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
+      Assertions.checkState(!buildCalled);
       this.allocator = allocator;
       return this;
     }
@@ -121,14 +147,24 @@ public class DefaultLoadControl implements LoadControl {
      *     for playback to resume after a rebuffer, in milliseconds. A rebuffer is defined to be
      *     caused by buffer depletion rather than a user action.
      * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
     public Builder setBufferDurationsMs(
         int minBufferMs,
         int maxBufferMs,
         int bufferForPlaybackMs,
         int bufferForPlaybackAfterRebufferMs) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
+      Assertions.checkState(!buildCalled);
+      assertGreaterOrEqual(bufferForPlaybackMs, 0, "bufferForPlaybackMs", "0");
+      assertGreaterOrEqual(
+          bufferForPlaybackAfterRebufferMs, 0, "bufferForPlaybackAfterRebufferMs", "0");
+      assertGreaterOrEqual(minBufferMs, bufferForPlaybackMs, "minBufferMs", "bufferForPlaybackMs");
+      assertGreaterOrEqual(
+          minBufferMs,
+          bufferForPlaybackAfterRebufferMs,
+          "minBufferMs",
+          "bufferForPlaybackAfterRebufferMs");
+      assertGreaterOrEqual(maxBufferMs, minBufferMs, "maxBufferMs", "minBufferMs");
       this.minBufferMs = minBufferMs;
       this.maxBufferMs = maxBufferMs;
       this.bufferForPlaybackMs = bufferForPlaybackMs;
@@ -142,10 +178,10 @@ public class DefaultLoadControl implements LoadControl {
      *
      * @param targetBufferBytes The target buffer size in bytes.
      * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
     public Builder setTargetBufferBytes(int targetBufferBytes) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
+      Assertions.checkState(!buildCalled);
       this.targetBufferBytes = targetBufferBytes;
       return this;
     }
@@ -157,24 +193,11 @@ public class DefaultLoadControl implements LoadControl {
      * @param prioritizeTimeOverSizeThresholds Whether the load control prioritizes buffer time
      *     constraints over buffer size constraints.
      * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
     public Builder setPrioritizeTimeOverSizeThresholds(boolean prioritizeTimeOverSizeThresholds) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
+      Assertions.checkState(!buildCalled);
       this.prioritizeTimeOverSizeThresholds = prioritizeTimeOverSizeThresholds;
-      return this;
-    }
-
-    /**
-     * Sets the {@link PriorityTaskManager} to use.
-     *
-     * @param priorityTaskManager The {@link PriorityTaskManager} to use.
-     * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
-     */
-    public Builder setPriorityTaskManager(PriorityTaskManager priorityTaskManager) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
-      this.priorityTaskManager = priorityTaskManager;
       return this;
     }
 
@@ -186,20 +209,28 @@ public class DefaultLoadControl implements LoadControl {
      * @param retainBackBufferFromKeyframe Whether the back buffer is retained from the previous
      *     keyframe.
      * @return This builder, for convenience.
-     * @throws IllegalStateException If {@link #createDefaultLoadControl()} has already been called.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
     public Builder setBackBuffer(int backBufferDurationMs, boolean retainBackBufferFromKeyframe) {
-      Assertions.checkState(!createDefaultLoadControlCalled);
+      Assertions.checkState(!buildCalled);
+      assertGreaterOrEqual(backBufferDurationMs, 0, "backBufferDurationMs", "0");
       this.backBufferDurationMs = backBufferDurationMs;
       this.retainBackBufferFromKeyframe = retainBackBufferFromKeyframe;
       return this;
     }
 
-    /** Creates a {@link DefaultLoadControl}. */
+    /** @deprecated use {@link #build} instead. */
+    @Deprecated
     public DefaultLoadControl createDefaultLoadControl() {
-      createDefaultLoadControlCalled = true;
+      return build();
+    }
+
+    /** Creates a {@link DefaultLoadControl}. */
+    public DefaultLoadControl build() {
+      Assertions.checkState(!buildCalled);
+      buildCalled = true;
       if (allocator == null) {
-        allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+        allocator = new DefaultAllocator(/* trimOnReset= */ true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
       }
       return new DefaultLoadControl(
           allocator,
@@ -209,7 +240,6 @@ public class DefaultLoadControl implements LoadControl {
           bufferForPlaybackAfterRebufferMs,
           targetBufferBytes,
           prioritizeTimeOverSizeThresholds,
-          priorityTaskManager,
           backBufferDurationMs,
           retainBackBufferFromKeyframe);
     }
@@ -223,11 +253,10 @@ public class DefaultLoadControl implements LoadControl {
   private final long bufferForPlaybackAfterRebufferUs;
   private final int targetBufferBytesOverwrite;
   private final boolean prioritizeTimeOverSizeThresholds;
-  private final PriorityTaskManager priorityTaskManager;
   private final long backBufferDurationUs;
   private final boolean retainBackBufferFromKeyframe;
 
-  private int targetBufferSize;
+  private int targetBufferBytes;
   private boolean isBuffering;
 
   /** Constructs a new instance, using the {@code DEFAULT_*} constants defined in this class. */
@@ -238,7 +267,6 @@ public class DefaultLoadControl implements LoadControl {
 
   /** @deprecated Use {@link Builder} instead. */
   @Deprecated
-  @SuppressWarnings("deprecation")
   public DefaultLoadControl(DefaultAllocator allocator) {
     this(
         allocator,
@@ -247,12 +275,13 @@ public class DefaultLoadControl implements LoadControl {
         DEFAULT_BUFFER_FOR_PLAYBACK_MS,
         DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
         DEFAULT_TARGET_BUFFER_BYTES,
-        DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS);
+        DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS,
+        DEFAULT_BACK_BUFFER_DURATION_MS,
+        DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME);
   }
 
   /** @deprecated Use {@link Builder} instead. */
   @Deprecated
-  @SuppressWarnings("deprecation")
   public DefaultLoadControl(
       DefaultAllocator allocator,
       int minBufferMs,
@@ -269,29 +298,6 @@ public class DefaultLoadControl implements LoadControl {
         bufferForPlaybackAfterRebufferMs,
         targetBufferBytes,
         prioritizeTimeOverSizeThresholds,
-        /* priorityTaskManager= */ null);
-  }
-
-  /** @deprecated Use {@link Builder} instead. */
-  @Deprecated
-  public DefaultLoadControl(
-      DefaultAllocator allocator,
-      int minBufferMs,
-      int maxBufferMs,
-      int bufferForPlaybackMs,
-      int bufferForPlaybackAfterRebufferMs,
-      int targetBufferBytes,
-      boolean prioritizeTimeOverSizeThresholds,
-      PriorityTaskManager priorityTaskManager) {
-    this(
-        allocator,
-        minBufferMs,
-        maxBufferMs,
-        bufferForPlaybackMs,
-        bufferForPlaybackAfterRebufferMs,
-        targetBufferBytes,
-        prioritizeTimeOverSizeThresholds,
-        priorityTaskManager,
         DEFAULT_BACK_BUFFER_DURATION_MS,
         DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME);
   }
@@ -304,7 +310,6 @@ public class DefaultLoadControl implements LoadControl {
       int bufferForPlaybackAfterRebufferMs,
       int targetBufferBytes,
       boolean prioritizeTimeOverSizeThresholds,
-      PriorityTaskManager priorityTaskManager,
       int backBufferDurationMs,
       boolean retainBackBufferFromKeyframe) {
     assertGreaterOrEqual(bufferForPlaybackMs, 0, "bufferForPlaybackMs", "0");
@@ -325,8 +330,11 @@ public class DefaultLoadControl implements LoadControl {
     this.bufferForPlaybackUs = C.msToUs(bufferForPlaybackMs);
     this.bufferForPlaybackAfterRebufferUs = C.msToUs(bufferForPlaybackAfterRebufferMs);
     this.targetBufferBytesOverwrite = targetBufferBytes;
+    this.targetBufferBytes =
+        targetBufferBytesOverwrite != C.LENGTH_UNSET
+            ? targetBufferBytesOverwrite
+            : DEFAULT_MIN_BUFFER_SIZE;
     this.prioritizeTimeOverSizeThresholds = prioritizeTimeOverSizeThresholds;
-    this.priorityTaskManager = priorityTaskManager;
     this.backBufferDurationUs = C.msToUs(backBufferDurationMs);
     this.retainBackBufferFromKeyframe = retainBackBufferFromKeyframe;
   }
@@ -339,11 +347,11 @@ public class DefaultLoadControl implements LoadControl {
   @Override
   public void onTracksSelected(Renderer[] renderers, TrackGroupArray trackGroups,
       TrackSelectionArray trackSelections) {
-    targetBufferSize =
+    targetBufferBytes =
         targetBufferBytesOverwrite == C.LENGTH_UNSET
-            ? calculateTargetBufferSize(renderers, trackSelections)
+            ? calculateTargetBufferBytes(renderers, trackSelections)
             : targetBufferBytesOverwrite;
-    allocator.setTargetBufferSize(targetBufferSize);
+    allocator.setTargetBufferSize(targetBufferBytes);
   }
 
   @Override
@@ -372,29 +380,29 @@ public class DefaultLoadControl implements LoadControl {
   }
 
   @Override
-  public boolean shouldContinueLoading(long bufferedDurationUs, float playbackSpeed) {
-    boolean targetBufferSizeReached = allocator.getTotalBytesAllocated() >= targetBufferSize;
-    boolean wasBuffering = isBuffering;
+  public boolean shouldContinueLoading(
+      long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
+    boolean targetBufferSizeReached = allocator.getTotalBytesAllocated() >= targetBufferBytes;
     long minBufferUs = this.minBufferUs;
     if (playbackSpeed > 1) {
       // The playback speed is faster than real time, so scale up the minimum required media
       // duration to keep enough media buffered for a playout duration of minBufferUs.
       long mediaDurationMinBufferUs =
           Util.getMediaDurationForPlayoutDuration(minBufferUs, playbackSpeed);
-      minBufferUs = Math.min(mediaDurationMinBufferUs, maxBufferUs);
+      minBufferUs = min(mediaDurationMinBufferUs, maxBufferUs);
     }
+    // Prevent playback from getting stuck if minBufferUs is too small.
+    minBufferUs = max(minBufferUs, 500_000);
     if (bufferedDurationUs < minBufferUs) {
       isBuffering = prioritizeTimeOverSizeThresholds || !targetBufferSizeReached;
+      if (!isBuffering && bufferedDurationUs < 500_000) {
+        Log.w(
+            "DefaultLoadControl",
+            "Target buffer size reached with less than 500ms of buffered media data.");
+      }
     } else if (bufferedDurationUs >= maxBufferUs || targetBufferSizeReached) {
       isBuffering = false;
     } // Else don't change the buffering state
-    if (priorityTaskManager != null && isBuffering != wasBuffering) {
-      if (isBuffering) {
-        priorityTaskManager.add(C.PRIORITY_PLAYBACK);
-      } else {
-        priorityTaskManager.remove(C.PRIORITY_PLAYBACK);
-      }
-    }
     return isBuffering;
   }
 
@@ -406,7 +414,7 @@ public class DefaultLoadControl implements LoadControl {
     return minBufferDurationUs <= 0
         || bufferedDurationUs >= minBufferDurationUs
         || (!prioritizeTimeOverSizeThresholds
-            && allocator.getTotalBytesAllocated() >= targetBufferSize);
+            && allocator.getTotalBytesAllocated() >= targetBufferBytes);
   }
 
   /**
@@ -417,25 +425,46 @@ public class DefaultLoadControl implements LoadControl {
    * @param trackSelectionArray The selected tracks.
    * @return The target buffer size in bytes.
    */
-  protected int calculateTargetBufferSize(
+  protected int calculateTargetBufferBytes(
       Renderer[] renderers, TrackSelectionArray trackSelectionArray) {
     int targetBufferSize = 0;
     for (int i = 0; i < renderers.length; i++) {
       if (trackSelectionArray.get(i) != null) {
-        targetBufferSize += Util.getDefaultBufferSize(renderers[i].getTrackType());
+        targetBufferSize += getDefaultBufferSize(renderers[i].getTrackType());
       }
     }
-    return targetBufferSize;
+    return max(DEFAULT_MIN_BUFFER_SIZE, targetBufferSize);
   }
 
   private void reset(boolean resetAllocator) {
-    targetBufferSize = 0;
-    if (priorityTaskManager != null && isBuffering) {
-      priorityTaskManager.remove(C.PRIORITY_PLAYBACK);
-    }
+    targetBufferBytes =
+        targetBufferBytesOverwrite == C.LENGTH_UNSET
+            ? DEFAULT_MIN_BUFFER_SIZE
+            : targetBufferBytesOverwrite;
     isBuffering = false;
     if (resetAllocator) {
       allocator.reset();
+    }
+  }
+
+  private static int getDefaultBufferSize(int trackType) {
+    switch (trackType) {
+      case C.TRACK_TYPE_DEFAULT:
+        return DEFAULT_MUXED_BUFFER_SIZE;
+      case C.TRACK_TYPE_AUDIO:
+        return DEFAULT_AUDIO_BUFFER_SIZE;
+      case C.TRACK_TYPE_VIDEO:
+        return DEFAULT_VIDEO_BUFFER_SIZE;
+      case C.TRACK_TYPE_TEXT:
+        return DEFAULT_TEXT_BUFFER_SIZE;
+      case C.TRACK_TYPE_METADATA:
+        return DEFAULT_METADATA_BUFFER_SIZE;
+      case C.TRACK_TYPE_CAMERA_MOTION:
+        return DEFAULT_CAMERA_MOTION_BUFFER_SIZE;
+      case C.TRACK_TYPE_NONE:
+        return 0;
+      default:
+        throw new IllegalArgumentException();
     }
   }
 

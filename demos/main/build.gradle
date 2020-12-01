@@ -16,7 +16,6 @@ apply plugin: 'com.android.application'
 
 android {
     compileSdkVersion project.ext.compileSdkVersion
-    buildToolsVersion project.ext.buildToolsVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -26,8 +25,9 @@ android {
     defaultConfig {
         versionName project.ext.releaseVersion
         versionCode project.ext.releaseVersionCode
-        minSdkVersion 16
-        targetSdkVersion project.ext.targetSdkVersion
+        minSdkVersion project.ext.minSdkVersion
+        targetSdkVersion project.ext.appTargetSdkVersion
+        multiDexEnabled true
     }
 
     buildTypes {
@@ -45,35 +45,44 @@ android {
     }
 
     lintOptions {
-        // The demo app does not have translations.
-        disable 'MissingTranslation'
+        // The demo app isn't indexed, doesn't have translations, and has a
+        // banner for AndroidTV that's only in xhdpi density.
+        disable 'GoogleAppIndexingWarning','MissingTranslation','IconDensities'
     }
 
-    flavorDimensions "extensions"
+    flavorDimensions "decoderExtensions"
 
     productFlavors {
-        noExtensions {
-            dimension "extensions"
+        noDecoderExtensions {
+            dimension "decoderExtensions"
+            buildConfigField "boolean", "USE_DECODER_EXTENSIONS", "false"
         }
-        withExtensions {
-            dimension "extensions"
+        withDecoderExtensions {
+            dimension "decoderExtensions"
+            buildConfigField "boolean", "USE_DECODER_EXTENSIONS", "true"
         }
     }
 }
 
 dependencies {
-    implementation 'com.android.support:support-annotations:' + supportLibraryVersion
+    compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
+    implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
+    implementation 'androidx.appcompat:appcompat:' + androidxAppCompatVersion
+    implementation 'androidx.multidex:multidex:' + androidxMultidexVersion
+    implementation 'com.google.android.material:material:1.2.1'
     implementation project(modulePrefix + 'library-core')
     implementation project(modulePrefix + 'library-dash')
     implementation project(modulePrefix + 'library-hls')
     implementation project(modulePrefix + 'library-smoothstreaming')
     implementation project(modulePrefix + 'library-ui')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-ffmpeg')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-flac')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-ima')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-opus')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-vp9')
-    withExtensionsImplementation project(path: modulePrefix + 'extension-rtmp')
+    implementation project(modulePrefix + 'extension-cronet')
+    implementation project(modulePrefix + 'extension-ima')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-av1')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-ffmpeg')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-flac')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-opus')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-vp9')
+    withDecoderExtensionsImplementation project(modulePrefix + 'extension-rtmp')
 }
 
 apply plugin: 'com.google.android.gms.strict-version-matcher-plugin'

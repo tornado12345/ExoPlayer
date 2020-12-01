@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.trackselection;
 
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.RendererConfiguration;
 import com.google.android.exoplayer2.util.Util;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
@@ -39,19 +40,20 @@ public final class TrackSelectorResult {
    * An opaque object that will be returned to {@link TrackSelector#onSelectionActivated(Object)}
    * should the selections be activated.
    */
-  public final Object info;
+  @Nullable public final Object info;
 
   /**
    * @param rendererConfigurations A {@link RendererConfiguration} for each renderer. A null entry
    *     indicates the corresponding renderer should be disabled.
    * @param selections A {@link TrackSelectionArray} containing the selection for each renderer.
    * @param info An opaque object that will be returned to {@link
-   *     TrackSelector#onSelectionActivated(Object)} should the selection be activated.
+   *     TrackSelector#onSelectionActivated(Object)} should the selection be activated. May be
+   *     {@code null}.
    */
   public TrackSelectorResult(
       @NullableType RendererConfiguration[] rendererConfigurations,
       @NullableType TrackSelection[] selections,
-      Object info) {
+      @Nullable Object info) {
     this.rendererConfigurations = rendererConfigurations;
     this.selections = new TrackSelectionArray(selections);
     this.info = info;
@@ -70,7 +72,7 @@ public final class TrackSelectorResult {
    *     will be returned.
    * @return Whether this result is equivalent to {@code other} for all renderers.
    */
-  public boolean isEquivalent(TrackSelectorResult other) {
+  public boolean isEquivalent(@Nullable TrackSelectorResult other) {
     if (other == null || other.selections.length != selections.length) {
       return false;
     }
@@ -84,8 +86,8 @@ public final class TrackSelectorResult {
 
   /**
    * Returns whether this result is equivalent to {@code other} for the renderer at the given index.
-   * The results are equivalent if they have equal renderersEnabled array, track selections, and
-   * configurations for the renderer.
+   * The results are equivalent if they have equal track selections and configurations for the
+   * renderer.
    *
    * @param other The other {@link TrackSelectorResult}. May be null, in which case {@code false}
    *     will be returned.
@@ -93,7 +95,7 @@ public final class TrackSelectorResult {
    * @return Whether this result is equivalent to {@code other} for the renderer at the specified
    *     index.
    */
-  public boolean isEquivalent(TrackSelectorResult other, int index) {
+  public boolean isEquivalent(@Nullable TrackSelectorResult other, int index) {
     if (other == null) {
       return false;
     }

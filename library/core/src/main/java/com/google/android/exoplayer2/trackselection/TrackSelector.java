@@ -15,12 +15,14 @@
  */
 package com.google.android.exoplayer2.trackselection;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.RendererConfiguration;
+import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.util.Assertions;
@@ -34,15 +36,13 @@ import com.google.android.exoplayer2.util.Assertions;
  *
  * The following interactions occur between the player and its track selector during playback.
  *
- * <p>
- *
  * <ul>
  *   <li>When the player is created it will initialize the track selector by calling {@link
  *       #init(InvalidationListener, BandwidthMeter)}.
  *   <li>When the player needs to make a track selection it will call {@link
- *       #selectTracks(RendererCapabilities[], TrackGroupArray)}. This typically occurs at the start
- *       of playback, when the player starts to buffer a new period of the media being played, and
- *       when the track selector invalidates its previous selections.
+ *       #selectTracks(RendererCapabilities[], TrackGroupArray, MediaPeriodId, Timeline)}. This
+ *       typically occurs at the start of playback, when the player starts to buffer a new period of
+ *       the media being played, and when the track selector invalidates its previous selections.
  *   <li>The player may perform a track selection well in advance of the selected tracks becoming
  *       active, where active is defined to mean that the renderers are actually consuming media
  *       corresponding to the selection that was made. For example when playing media containing
@@ -61,19 +61,21 @@ import com.google.android.exoplayer2.util.Assertions;
  *       prefer audio tracks in a particular language. This will trigger the player to make new
  *       track selections. Note that the player will have to re-buffer in the case that the new
  *       track selection for the currently playing period differs from the one that was invalidated.
+ *       Implementing subclasses can trigger invalidation by calling {@link #invalidate()}, which
+ *       will call {@link InvalidationListener#onTrackSelectionsInvalidated()}.
  * </ul>
  *
  * <h3>Renderer configuration</h3>
  *
  * The {@link TrackSelectorResult} returned by {@link #selectTracks(RendererCapabilities[],
- * TrackGroupArray)} contains not only {@link TrackSelection}s for each renderer, but also {@link
- * RendererConfiguration}s defining configuration parameters that the renderers should apply when
- * consuming the corresponding media. Whilst it may seem counter-intuitive for a track selector to
- * also specify renderer configuration information, in practice the two are tightly bound together.
- * It may only be possible to play a certain combination tracks if the renderers are configured in a
- * particular way. Equally, it may only be possible to configure renderers in a particular way if
- * certain tracks are selected. Hence it makes sense to determined the track selection and
- * corresponding renderer configurations in a single step.
+ * TrackGroupArray, MediaPeriodId, Timeline)} contains not only {@link TrackSelection}s for each
+ * renderer, but also {@link RendererConfiguration}s defining configuration parameters that the
+ * renderers should apply when consuming the corresponding media. Whilst it may seem counter-
+ * intuitive for a track selector to also specify renderer configuration information, in practice
+ * the two are tightly bound together. It may only be possible to play a certain combination tracks
+ * if the renderers are configured in a particular way. Equally, it may only be possible to
+ * configure renderers in a particular way if certain tracks are selected. Hence it makes sense to
+ * determine the track selection and corresponding renderer configurations in a single step.
  *
  * <h3>Threading model</h3>
  *
@@ -96,8 +98,8 @@ public abstract class TrackSelector {
 
   }
 
-  private @Nullable InvalidationListener listener;
-  private @Nullable BandwidthMeter bandwidthMeter;
+  @Nullable private InvalidationListener listener;
+  @Nullable private BandwidthMeter bandwidthMeter;
 
   /**
    * Called by the player to initialize the selector.
@@ -117,19 +119,25 @@ public abstract class TrackSelector {
    * @param rendererCapabilities The {@link RendererCapabilities} of the renderers for which tracks
    *     are to be selected.
    * @param trackGroups The available track groups.
+   * @param periodId The {@link MediaPeriodId} of the period for which tracks are to be selected.
+   * @param timeline The {@link Timeline} holding the period for which tracks are to be selected.
    * @return A {@link TrackSelectorResult} describing the track selections.
    * @throws ExoPlaybackException If an error occurs selecting tracks.
    */
-  public abstract TrackSelectorResult selectTracks(RendererCapabilities[] rendererCapabilities,
-      TrackGroupArray trackGroups) throws ExoPlaybackException;
+  public abstract TrackSelectorResult selectTracks(
+      RendererCapabilities[] rendererCapabilities,
+      TrackGroupArray trackGroups,
+      MediaPeriodId periodId,
+      Timeline timeline)
+      throws ExoPlaybackException;
 
   /**
-   * Called by the player when a {@link TrackSelectorResult} previously generated by
-   * {@link #selectTracks(RendererCapabilities[], TrackGroupArray)} is activated.
+   * Called by the player when a {@link TrackSelectorResult} previously generated by {@link
+   * #selectTracks(RendererCapabilities[], TrackGroupArray, MediaPeriodId, Timeline)} is activated.
    *
    * @param info The value of {@link TrackSelectorResult#info} in the activated selection.
    */
-  public abstract void onSelectionActivated(Object info);
+  public abstract void onSelectionActivated(@Nullable Object info);
 
   /**
    * Calls {@link InvalidationListener#onTrackSelectionsInvalidated()} to invalidate all previously

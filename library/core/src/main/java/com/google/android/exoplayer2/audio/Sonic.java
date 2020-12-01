@@ -16,6 +16,8 @@
  */
 package com.google.android.exoplayer2.audio;
 
+import static java.lang.Math.min;
+
 import com.google.android.exoplayer2.util.Assertions;
 import java.nio.ShortBuffer;
 import java.util.Arrays;
@@ -30,6 +32,7 @@ import java.util.Arrays;
   private static final int MINIMUM_PITCH = 65;
   private static final int MAXIMUM_PITCH = 400;
   private static final int AMDF_FREQUENCY = 4000;
+  private static final int BYTES_PER_SAMPLE = 2;
 
   private final int inputSampleRateHz;
   private final int channelCount;
@@ -102,7 +105,7 @@ import java.util.Arrays;
    * @param buffer A {@link ShortBuffer} into which output will be written.
    */
   public void getOutput(ShortBuffer buffer) {
-    int framesToRead = Math.min(buffer.remaining() / channelCount, outputFrameCount);
+    int framesToRead = min(buffer.remaining() / channelCount, outputFrameCount);
     buffer.put(outputBuffer, 0, framesToRead * channelCount);
     outputFrameCount -= framesToRead;
     System.arraycopy(
@@ -157,9 +160,9 @@ import java.util.Arrays;
     maxDiff = 0;
   }
 
-  /** Returns the number of output frames that can be read with {@link #getOutput(ShortBuffer)}. */
-  public int getFramesAvailable() {
-    return outputFrameCount;
+  /** Returns the size of output that can be read with {@link #getOutput(ShortBuffer)}, in bytes. */
+  public int getOutputSize() {
+    return outputFrameCount * channelCount * BYTES_PER_SAMPLE;
   }
 
   // Internal methods.
@@ -204,7 +207,7 @@ import java.util.Arrays;
   }
 
   private int copyInputToOutput(int positionFrames) {
-    int frameCount = Math.min(maxRequiredFrameCount, remainingInputToCopyFrameCount);
+    int frameCount = min(maxRequiredFrameCount, remainingInputToCopyFrameCount);
     copyToOutput(inputBuffer, positionFrames, frameCount);
     remainingInputToCopyFrameCount -= frameCount;
     return frameCount;

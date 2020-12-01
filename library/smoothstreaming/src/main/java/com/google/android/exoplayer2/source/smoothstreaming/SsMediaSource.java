@@ -15,40 +15,56 @@
  */
 package com.google.android.exoplayer2.source.smoothstreaming;
 
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 import android.net.Uri;
 import android.os.Handler;
 import android.os.SystemClock;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
-import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
+import com.google.android.exoplayer2.offline.FilteringManifestParser;
+import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.BaseMediaSource;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.DefaultCompositeSequenceableLoaderFactory;
+import com.google.android.exoplayer2.source.LoadEventInfo;
+import com.google.android.exoplayer2.source.MediaLoadData;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.MediaSourceDrmHelper;
 import com.google.android.exoplayer2.source.MediaSourceEventListener;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
+import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.SinglePeriodTimeline;
-import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.StreamElement;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifestParser;
-import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DefaultLoadErrorHandlingPolicy;
+import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.LoadErrorInfo;
 import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.upstream.Loader.LoadErrorAction;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
 import com.google.android.exoplayer2.upstream.ParsingLoadable;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /** A SmoothStreaming {@link MediaSource}. */
 public final class SsMediaSource extends BaseMediaSource
@@ -59,17 +75,19 @@ public final class SsMediaSource extends BaseMediaSource
   }
 
   /** Factory for {@link SsMediaSource}. */
-  public static final class Factory implements AdsMediaSource.MediaSourceFactory {
+  public static final class Factory implements MediaSourceFactory {
 
     private final SsChunkSource.Factory chunkSourceFactory;
-    private final @Nullable DataSource.Factory manifestDataSourceFactory;
+    private final MediaSourceDrmHelper mediaSourceDrmHelper;
+    @Nullable private final DataSource.Factory manifestDataSourceFactory;
 
-    private @Nullable ParsingLoadable.Parser<? extends SsManifest> manifestParser;
     private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+    @Nullable private DrmSessionManager drmSessionManager;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private long livePresentationDelayMs;
-    private boolean isCreateCalled;
-    private @Nullable Object tag;
+    @Nullable private ParsingLoadable.Parser<? extends SsManifest> manifestParser;
+    private List<StreamKey> streamKeys;
+    @Nullable private Object tag;
 
     /**
      * Creates a new factory for {@link SsMediaSource}s.
@@ -93,40 +111,26 @@ public final class SsMediaSource extends BaseMediaSource
     public Factory(
         SsChunkSource.Factory chunkSourceFactory,
         @Nullable DataSource.Factory manifestDataSourceFactory) {
-      this.chunkSourceFactory = Assertions.checkNotNull(chunkSourceFactory);
+      this.chunkSourceFactory = checkNotNull(chunkSourceFactory);
       this.manifestDataSourceFactory = manifestDataSourceFactory;
+      mediaSourceDrmHelper = new MediaSourceDrmHelper();
       loadErrorHandlingPolicy = new DefaultLoadErrorHandlingPolicy();
       livePresentationDelayMs = DEFAULT_LIVE_PRESENTATION_DELAY_MS;
       compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
+      streamKeys = Collections.emptyList();
     }
 
     /**
-     * Sets a tag for the media source which will be published in the {@link Timeline} of the source
-     * as {@link Timeline.Window#tag}.
-     *
-     * @param tag A tag for the media source.
-     * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
+     * @deprecated Use {@link MediaItem.Builder#setTag(Object)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
      */
-    public Factory setTag(Object tag) {
-      Assertions.checkState(!isCreateCalled);
+    @Deprecated
+    public Factory setTag(@Nullable Object tag) {
       this.tag = tag;
       return this;
     }
 
-    /**
-     * Sets the minimum number of times to retry if a loading error occurs. See {@link
-     * #setLoadErrorHandlingPolicy} for the default value.
-     *
-     * <p>Calling this method is equivalent to calling {@link #setLoadErrorHandlingPolicy} with
-     * {@link DefaultLoadErrorHandlingPolicy#DefaultLoadErrorHandlingPolicy(int)
-     * DefaultLoadErrorHandlingPolicy(minLoadableRetryCount)}
-     *
-     * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
-     * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
-     * @deprecated Use {@link #setLoadErrorHandlingPolicy(LoadErrorHandlingPolicy)} instead.
-     */
+    /** @deprecated Use {@link #setLoadErrorHandlingPolicy(LoadErrorHandlingPolicy)} instead. */
     @Deprecated
     public Factory setMinLoadableRetryCount(int minLoadableRetryCount) {
       return setLoadErrorHandlingPolicy(new DefaultLoadErrorHandlingPolicy(minLoadableRetryCount));
@@ -140,11 +144,13 @@ public final class SsMediaSource extends BaseMediaSource
      *
      * @param loadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy}.
      * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
      */
-    public Factory setLoadErrorHandlingPolicy(LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
-      Assertions.checkState(!isCreateCalled);
-      this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
+    public Factory setLoadErrorHandlingPolicy(
+        @Nullable LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
+      this.loadErrorHandlingPolicy =
+          loadErrorHandlingPolicy != null
+              ? loadErrorHandlingPolicy
+              : new DefaultLoadErrorHandlingPolicy();
       return this;
     }
 
@@ -156,10 +162,8 @@ public final class SsMediaSource extends BaseMediaSource
      * @param livePresentationDelayMs For live playbacks, the duration in milliseconds by which the
      *     default start position should precede the end of the live window.
      * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
      */
     public Factory setLivePresentationDelayMs(long livePresentationDelayMs) {
-      Assertions.checkState(!isCreateCalled);
       this.livePresentationDelayMs = livePresentationDelayMs;
       return this;
     }
@@ -169,11 +173,10 @@ public final class SsMediaSource extends BaseMediaSource
      *
      * @param manifestParser A parser for loaded manifest data.
      * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
      */
-    public Factory setManifestParser(ParsingLoadable.Parser<? extends SsManifest> manifestParser) {
-      Assertions.checkState(!isCreateCalled);
-      this.manifestParser = Assertions.checkNotNull(manifestParser);
+    public Factory setManifestParser(
+        @Nullable ParsingLoadable.Parser<? extends SsManifest> manifestParser) {
+      this.manifestParser = manifestParser;
       return this;
     }
 
@@ -186,14 +189,53 @@ public final class SsMediaSource extends BaseMediaSource
      *     SequenceableLoader}s for when this media source loads data from multiple streams (video,
      *     audio etc.).
      * @return This factory, for convenience.
-     * @throws IllegalStateException If one of the {@code create} methods has already been called.
      */
     public Factory setCompositeSequenceableLoaderFactory(
-        CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory) {
-      Assertions.checkState(!isCreateCalled);
+        @Nullable CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory) {
       this.compositeSequenceableLoaderFactory =
-          Assertions.checkNotNull(compositeSequenceableLoaderFactory);
+          compositeSequenceableLoaderFactory != null
+              ? compositeSequenceableLoaderFactory
+              : new DefaultCompositeSequenceableLoaderFactory();
       return this;
+    }
+
+    @Override
+    public Factory setDrmSessionManager(@Nullable DrmSessionManager drmSessionManager) {
+      this.drmSessionManager = drmSessionManager;
+      return this;
+    }
+
+    @Override
+    public Factory setDrmHttpDataSourceFactory(
+        @Nullable HttpDataSource.Factory drmHttpDataSourceFactory) {
+      mediaSourceDrmHelper.setDrmHttpDataSourceFactory(drmHttpDataSourceFactory);
+      return this;
+    }
+
+    @Override
+    public Factory setDrmUserAgent(@Nullable String userAgent) {
+      mediaSourceDrmHelper.setDrmUserAgent(userAgent);
+      return this;
+    }
+
+    /**
+     * @deprecated Use {@link MediaItem.Builder#setStreamKeys(List)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
+     */
+    @SuppressWarnings("deprecation")
+    @Deprecated
+    @Override
+    public Factory setStreamKeys(@Nullable List<StreamKey> streamKeys) {
+      this.streamKeys = streamKeys != null ? streamKeys : Collections.emptyList();
+      return this;
+    }
+
+    /** @deprecated Use {@link #createMediaSource(MediaItem)} instead. */
+    @SuppressWarnings("deprecation")
+    @Deprecated
+    @Override
+    public SsMediaSource createMediaSource(Uri uri) {
+      return createMediaSource(new MediaItem.Builder().setUri(uri).build());
     }
 
     /**
@@ -205,18 +247,47 @@ public final class SsMediaSource extends BaseMediaSource
      * @throws IllegalArgumentException If {@link SsManifest#isLive} is true.
      */
     public SsMediaSource createMediaSource(SsManifest manifest) {
+      return createMediaSource(manifest, MediaItem.fromUri(Uri.EMPTY));
+    }
+
+    /**
+     * Returns a new {@link SsMediaSource} using the current parameters and the specified sideloaded
+     * manifest.
+     *
+     * @param manifest The manifest. {@link SsManifest#isLive} must be false.
+     * @param mediaItem The {@link MediaItem} to be included in the timeline.
+     * @return The new {@link SsMediaSource}.
+     * @throws IllegalArgumentException If {@link SsManifest#isLive} is true.
+     */
+    public SsMediaSource createMediaSource(SsManifest manifest, MediaItem mediaItem) {
       Assertions.checkArgument(!manifest.isLive);
-      isCreateCalled = true;
+      List<StreamKey> streamKeys =
+          mediaItem.playbackProperties != null && !mediaItem.playbackProperties.streamKeys.isEmpty()
+              ? mediaItem.playbackProperties.streamKeys
+              : this.streamKeys;
+      if (!streamKeys.isEmpty()) {
+        manifest = manifest.copy(streamKeys);
+      }
+      boolean hasUri = mediaItem.playbackProperties != null;
+      boolean hasTag = hasUri && mediaItem.playbackProperties.tag != null;
+      mediaItem =
+          mediaItem
+              .buildUpon()
+              .setMimeType(MimeTypes.APPLICATION_SS)
+              .setUri(hasUri ? mediaItem.playbackProperties.uri : Uri.EMPTY)
+              .setTag(hasTag ? mediaItem.playbackProperties.tag : tag)
+              .setStreamKeys(streamKeys)
+              .build();
       return new SsMediaSource(
+          mediaItem,
           manifest,
-          /* manifestUri= */ null,
           /* manifestDataSourceFactory= */ null,
           /* manifestParser= */ null,
           chunkSourceFactory,
           compositeSequenceableLoaderFactory,
+          drmSessionManager != null ? drmSessionManager : mediaSourceDrmHelper.create(mediaItem),
           loadErrorHandlingPolicy,
-          livePresentationDelayMs,
-          tag);
+          livePresentationDelayMs);
     }
 
     /**
@@ -236,33 +307,10 @@ public final class SsMediaSource extends BaseMediaSource
     }
 
     /**
-     * Returns a new {@link SsMediaSource} using the current parameters.
-     *
-     * @param manifestUri The manifest {@link Uri}.
-     * @return The new {@link SsMediaSource}.
-     */
-    @Override
-    public SsMediaSource createMediaSource(Uri manifestUri) {
-      isCreateCalled = true;
-      if (manifestParser == null) {
-        manifestParser = new SsManifestParser();
-      }
-      return new SsMediaSource(
-          /* manifest= */ null,
-          Assertions.checkNotNull(manifestUri),
-          manifestDataSourceFactory,
-          manifestParser,
-          chunkSourceFactory,
-          compositeSequenceableLoaderFactory,
-          loadErrorHandlingPolicy,
-          livePresentationDelayMs,
-          tag);
-    }
-
-    /**
-     * @deprecated Use {@link #createMediaSource(Uri)} and {@link #addEventListener(Handler,
+     * @deprecated Use {@link #createMediaSource(MediaItem)} and {@link #addEventListener(Handler,
      *     MediaSourceEventListener)} instead.
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public SsMediaSource createMediaSource(
         Uri manifestUri,
@@ -275,18 +323,61 @@ public final class SsMediaSource extends BaseMediaSource
       return mediaSource;
     }
 
+    /**
+     * Returns a new {@link SsMediaSource} using the current parameters.
+     *
+     * @param mediaItem The {@link MediaItem}.
+     * @return The new {@link SsMediaSource}.
+     * @throws NullPointerException if {@link MediaItem#playbackProperties} is {@code null}.
+     */
+    @Override
+    public SsMediaSource createMediaSource(MediaItem mediaItem) {
+      checkNotNull(mediaItem.playbackProperties);
+      @Nullable ParsingLoadable.Parser<? extends SsManifest> manifestParser = this.manifestParser;
+      if (manifestParser == null) {
+        manifestParser = new SsManifestParser();
+      }
+      List<StreamKey> streamKeys =
+          !mediaItem.playbackProperties.streamKeys.isEmpty()
+              ? mediaItem.playbackProperties.streamKeys
+              : this.streamKeys;
+      if (!streamKeys.isEmpty()) {
+        manifestParser = new FilteringManifestParser<>(manifestParser, streamKeys);
+      }
+
+      boolean needsTag = mediaItem.playbackProperties.tag == null && tag != null;
+      boolean needsStreamKeys =
+          mediaItem.playbackProperties.streamKeys.isEmpty() && !streamKeys.isEmpty();
+      if (needsTag && needsStreamKeys) {
+        mediaItem = mediaItem.buildUpon().setTag(tag).setStreamKeys(streamKeys).build();
+      } else if (needsTag) {
+        mediaItem = mediaItem.buildUpon().setTag(tag).build();
+      } else if (needsStreamKeys) {
+        mediaItem = mediaItem.buildUpon().setStreamKeys(streamKeys).build();
+      }
+      return new SsMediaSource(
+          mediaItem,
+          /* manifest= */ null,
+          manifestDataSourceFactory,
+          manifestParser,
+          chunkSourceFactory,
+          compositeSequenceableLoaderFactory,
+          drmSessionManager != null ? drmSessionManager : mediaSourceDrmHelper.create(mediaItem),
+          loadErrorHandlingPolicy,
+          livePresentationDelayMs);
+    }
+
     @Override
     public int[] getSupportedTypes() {
       return new int[] {C.TYPE_SS};
     }
-
   }
 
   /**
    * The default presentation delay for live streams. The presentation delay is the duration by
    * which the default start position precedes the end of the live window.
    */
-  public static final long DEFAULT_LIVE_PRESENTATION_DELAY_MS = 30000;
+  public static final long DEFAULT_LIVE_PRESENTATION_DELAY_MS = 30_000;
 
   /**
    * The minimum period between manifest refreshes.
@@ -295,24 +386,26 @@ public final class SsMediaSource extends BaseMediaSource
   /**
    * The minimum default start position for live streams, relative to the start of the live window.
    */
-  private static final long MIN_LIVE_DEFAULT_START_POSITION_US = 5000000;
+  private static final long MIN_LIVE_DEFAULT_START_POSITION_US = 5_000_000;
 
   private final boolean sideloadedManifest;
   private final Uri manifestUri;
+  private final MediaItem.PlaybackProperties playbackProperties;
+  private final MediaItem mediaItem;
   private final DataSource.Factory manifestDataSourceFactory;
   private final SsChunkSource.Factory chunkSourceFactory;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final long livePresentationDelayMs;
   private final EventDispatcher manifestEventDispatcher;
   private final ParsingLoadable.Parser<? extends SsManifest> manifestParser;
   private final ArrayList<SsMediaPeriod> mediaPeriods;
-  private final @Nullable Object tag;
 
   private DataSource manifestDataSource;
   private Loader manifestLoader;
   private LoaderErrorThrower manifestLoaderErrorThrower;
-  private @Nullable TransferListener mediaTransferListener;
+  @Nullable private TransferListener mediaTransferListener;
 
   private long manifestLoadStartTimestamp;
   private SsManifest manifest;
@@ -333,8 +426,8 @@ public final class SsMediaSource extends BaseMediaSource
   public SsMediaSource(
       SsManifest manifest,
       SsChunkSource.Factory chunkSourceFactory,
-      Handler eventHandler,
-      MediaSourceEventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable MediaSourceEventListener eventListener) {
     this(
         manifest,
         chunkSourceFactory,
@@ -358,18 +451,18 @@ public final class SsMediaSource extends BaseMediaSource
       SsManifest manifest,
       SsChunkSource.Factory chunkSourceFactory,
       int minLoadableRetryCount,
-      Handler eventHandler,
-      MediaSourceEventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable MediaSourceEventListener eventListener) {
     this(
+        new MediaItem.Builder().setUri(Uri.EMPTY).setMimeType(MimeTypes.APPLICATION_SS).build(),
         manifest,
-        /* manifestUri= */ null,
         /* manifestDataSourceFactory= */ null,
         /* manifestParser= */ null,
         chunkSourceFactory,
         new DefaultCompositeSequenceableLoaderFactory(),
+        DrmSessionManager.getDummyDrmSessionManager(),
         new DefaultLoadErrorHandlingPolicy(minLoadableRetryCount),
-        DEFAULT_LIVE_PRESENTATION_DELAY_MS,
-        /* tag= */ null);
+        DEFAULT_LIVE_PRESENTATION_DELAY_MS);
     if (eventHandler != null && eventListener != null) {
       addEventListener(eventHandler, eventListener);
     }
@@ -393,8 +486,8 @@ public final class SsMediaSource extends BaseMediaSource
       Uri manifestUri,
       DataSource.Factory manifestDataSourceFactory,
       SsChunkSource.Factory chunkSourceFactory,
-      Handler eventHandler,
-      MediaSourceEventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable MediaSourceEventListener eventListener) {
     this(
         manifestUri,
         manifestDataSourceFactory,
@@ -428,8 +521,8 @@ public final class SsMediaSource extends BaseMediaSource
       SsChunkSource.Factory chunkSourceFactory,
       int minLoadableRetryCount,
       long livePresentationDelayMs,
-      Handler eventHandler,
-      MediaSourceEventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable MediaSourceEventListener eventListener) {
     this(manifestUri, manifestDataSourceFactory, new SsManifestParser(), chunkSourceFactory,
         minLoadableRetryCount, livePresentationDelayMs, eventHandler, eventListener);
   }
@@ -458,59 +551,75 @@ public final class SsMediaSource extends BaseMediaSource
       SsChunkSource.Factory chunkSourceFactory,
       int minLoadableRetryCount,
       long livePresentationDelayMs,
-      Handler eventHandler,
-      MediaSourceEventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable MediaSourceEventListener eventListener) {
     this(
+        new MediaItem.Builder().setUri(manifestUri).setMimeType(MimeTypes.APPLICATION_SS).build(),
         /* manifest= */ null,
-        manifestUri,
         manifestDataSourceFactory,
         manifestParser,
         chunkSourceFactory,
         new DefaultCompositeSequenceableLoaderFactory(),
+        DrmSessionManager.getDummyDrmSessionManager(),
         new DefaultLoadErrorHandlingPolicy(minLoadableRetryCount),
-        livePresentationDelayMs,
-        /* tag= */ null);
+        livePresentationDelayMs);
     if (eventHandler != null && eventListener != null) {
       addEventListener(eventHandler, eventListener);
     }
   }
 
   private SsMediaSource(
-      SsManifest manifest,
-      Uri manifestUri,
-      DataSource.Factory manifestDataSourceFactory,
-      ParsingLoadable.Parser<? extends SsManifest> manifestParser,
+      MediaItem mediaItem,
+      @Nullable SsManifest manifest,
+      @Nullable DataSource.Factory manifestDataSourceFactory,
+      @Nullable ParsingLoadable.Parser<? extends SsManifest> manifestParser,
       SsChunkSource.Factory chunkSourceFactory,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
-      long livePresentationDelayMs,
-      @Nullable Object tag) {
+      long livePresentationDelayMs) {
     Assertions.checkState(manifest == null || !manifest.isLive);
+    this.mediaItem = mediaItem;
+    playbackProperties = checkNotNull(mediaItem.playbackProperties);
     this.manifest = manifest;
-    this.manifestUri = manifestUri == null ? null : SsUtil.fixManifestUri(manifestUri);
+    this.manifestUri =
+        playbackProperties.uri.equals(Uri.EMPTY)
+            ? null
+            : Util.fixSmoothStreamingIsmManifestUri(playbackProperties.uri);
     this.manifestDataSourceFactory = manifestDataSourceFactory;
     this.manifestParser = manifestParser;
     this.chunkSourceFactory = chunkSourceFactory;
     this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
+    this.drmSessionManager = drmSessionManager;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
     this.livePresentationDelayMs = livePresentationDelayMs;
     this.manifestEventDispatcher = createEventDispatcher(/* mediaPeriodId= */ null);
-    this.tag = tag;
     sideloadedManifest = manifest != null;
     mediaPeriods = new ArrayList<>();
   }
 
   // MediaSource implementation.
 
+  /**
+   * @deprecated Use {@link #getMediaItem()} and {@link MediaItem.PlaybackProperties#tag} instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   @Nullable
   public Object getTag() {
-    return tag;
+    return playbackProperties.tag;
   }
 
   @Override
-  public void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+  public MediaItem getMediaItem() {
+    return mediaItem;
+  }
+
+  @Override
+  protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     this.mediaTransferListener = mediaTransferListener;
+    drmSessionManager.prepare();
     if (sideloadedManifest) {
       manifestLoaderErrorThrower = new LoaderErrorThrower.Dummy();
       processManifest();
@@ -518,7 +627,7 @@ public final class SsMediaSource extends BaseMediaSource
       manifestDataSource = manifestDataSourceFactory.createDataSource();
       manifestLoader = new Loader("Loader:Manifest");
       manifestLoaderErrorThrower = manifestLoader;
-      manifestRefreshHandler = new Handler();
+      manifestRefreshHandler = Util.createHandlerForCurrentLooper();
       startLoadingManifest();
     }
   }
@@ -530,15 +639,18 @@ public final class SsMediaSource extends BaseMediaSource
 
   @Override
   public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator, long startPositionUs) {
-    EventDispatcher eventDispatcher = createEventDispatcher(id);
+    MediaSourceEventListener.EventDispatcher mediaSourceEventDispatcher = createEventDispatcher(id);
+    DrmSessionEventListener.EventDispatcher drmEventDispatcher = createDrmEventDispatcher(id);
     SsMediaPeriod period =
         new SsMediaPeriod(
             manifest,
             chunkSourceFactory,
             mediaTransferListener,
             compositeSequenceableLoaderFactory,
+            drmSessionManager,
+            drmEventDispatcher,
             loadErrorHandlingPolicy,
-            eventDispatcher,
+            mediaSourceEventDispatcher,
             manifestLoaderErrorThrower,
             allocator);
     mediaPeriods.add(period);
@@ -552,7 +664,7 @@ public final class SsMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void releaseSourceInternal() {
+  protected void releaseSourceInternal() {
     manifest = sideloadedManifest ? manifest : null;
     manifestDataSource = null;
     manifestLoadStartTimestamp = 0;
@@ -564,21 +676,25 @@ public final class SsMediaSource extends BaseMediaSource
       manifestRefreshHandler.removeCallbacksAndMessages(null);
       manifestRefreshHandler = null;
     }
+    drmSessionManager.release();
   }
 
   // Loader.Callback implementation
 
   @Override
-  public void onLoadCompleted(ParsingLoadable<SsManifest> loadable, long elapsedRealtimeMs,
-      long loadDurationMs) {
-    manifestEventDispatcher.loadCompleted(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
-        loadable.type,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.bytesLoaded());
+  public void onLoadCompleted(
+      ParsingLoadable<SsManifest> loadable, long elapsedRealtimeMs, long loadDurationMs) {
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            loadable.bytesLoaded());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
+    manifestEventDispatcher.loadCompleted(loadEventInfo, loadable.type);
     manifest = loadable.getResult();
     manifestLoadStartTimestamp = elapsedRealtimeMs - loadDurationMs;
     processManifest();
@@ -586,16 +702,22 @@ public final class SsMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void onLoadCanceled(ParsingLoadable<SsManifest> loadable, long elapsedRealtimeMs,
-      long loadDurationMs, boolean released) {
-    manifestEventDispatcher.loadCanceled(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
-        loadable.type,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.bytesLoaded());
+  public void onLoadCanceled(
+      ParsingLoadable<SsManifest> loadable,
+      long elapsedRealtimeMs,
+      long loadDurationMs,
+      boolean released) {
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            loadable.bytesLoaded());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
+    manifestEventDispatcher.loadCanceled(loadEventInfo, loadable.type);
   }
 
   @Override
@@ -605,18 +727,29 @@ public final class SsMediaSource extends BaseMediaSource
       long loadDurationMs,
       IOException error,
       int errorCount) {
-    boolean isFatal = error instanceof ParserException;
-    manifestEventDispatcher.loadError(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
-        loadable.type,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.bytesLoaded(),
-        error,
-        isFatal);
-    return isFatal ? Loader.DONT_RETRY_FATAL : Loader.RETRY;
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            loadable.bytesLoaded());
+    MediaLoadData mediaLoadData = new MediaLoadData(loadable.type);
+    long retryDelayMs =
+        loadErrorHandlingPolicy.getRetryDelayMsFor(
+            new LoadErrorInfo(loadEventInfo, mediaLoadData, error, errorCount));
+    LoadErrorAction loadErrorAction =
+        retryDelayMs == C.TIME_UNSET
+            ? Loader.DONT_RETRY_FATAL
+            : Loader.createRetryAction(/* resetErrorCount= */ false, retryDelayMs);
+    boolean wasCanceled = !loadErrorAction.isRetry();
+    manifestEventDispatcher.loadError(loadEventInfo, loadable.type, error, wasCanceled);
+    if (wasCanceled) {
+      loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
+    }
+    return loadErrorAction;
   }
 
   // Internal methods
@@ -630,9 +763,12 @@ public final class SsMediaSource extends BaseMediaSource
     long endTimeUs = Long.MIN_VALUE;
     for (StreamElement element : manifest.streamElements) {
       if (element.chunkCount > 0) {
-        startTimeUs = Math.min(startTimeUs, element.getStartTimeUs(0));
-        endTimeUs = Math.max(endTimeUs, element.getStartTimeUs(element.chunkCount - 1)
-            + element.getChunkDurationUs(element.chunkCount - 1));
+        startTimeUs = min(startTimeUs, element.getStartTimeUs(0));
+        endTimeUs =
+            max(
+                endTimeUs,
+                element.getStartTimeUs(element.chunkCount - 1)
+                    + element.getChunkDurationUs(element.chunkCount - 1));
       }
     }
 
@@ -646,11 +782,13 @@ public final class SsMediaSource extends BaseMediaSource
               /* windowPositionInPeriodUs= */ 0,
               /* windowDefaultStartPositionUs= */ 0,
               /* isSeekable= */ true,
-              manifest.isLive,
-              tag);
+              /* isDynamic= */ manifest.isLive,
+              /* isLive= */ manifest.isLive,
+              manifest,
+              mediaItem);
     } else if (manifest.isLive) {
       if (manifest.dvrWindowLengthUs != C.TIME_UNSET && manifest.dvrWindowLengthUs > 0) {
-        startTimeUs = Math.max(startTimeUs, endTimeUs - manifest.dvrWindowLengthUs);
+        startTimeUs = max(startTimeUs, endTimeUs - manifest.dvrWindowLengthUs);
       }
       long durationUs = endTimeUs - startTimeUs;
       long defaultStartPositionUs = durationUs - C.msToUs(livePresentationDelayMs);
@@ -658,7 +796,7 @@ public final class SsMediaSource extends BaseMediaSource
         // The default start position is too close to the start of the live window. Set it to the
         // minimum default start position provided the window is at least twice as big. Else set
         // it to the middle of the window.
-        defaultStartPositionUs = Math.min(MIN_LIVE_DEFAULT_START_POSITION_US, durationUs / 2);
+        defaultStartPositionUs = min(MIN_LIVE_DEFAULT_START_POSITION_US, durationUs / 2);
       }
       timeline =
           new SinglePeriodTimeline(
@@ -668,7 +806,9 @@ public final class SsMediaSource extends BaseMediaSource
               defaultStartPositionUs,
               /* isSeekable= */ true,
               /* isDynamic= */ true,
-              tag);
+              /* isLive= */ true,
+              manifest,
+              mediaItem);
     } else {
       long durationUs = manifest.durationUs != C.TIME_UNSET ? manifest.durationUs
           : endTimeUs - startTimeUs;
@@ -680,9 +820,11 @@ public final class SsMediaSource extends BaseMediaSource
               /* windowDefaultStartPositionUs= */ 0,
               /* isSeekable= */ true,
               /* isDynamic= */ false,
-              tag);
+              /* isLive= */ false,
+              manifest,
+              mediaItem);
     }
-    refreshSourceInfo(timeline, manifest);
+    refreshSourceInfo(timeline);
   }
 
   private void scheduleManifestRefresh() {
@@ -690,17 +832,22 @@ public final class SsMediaSource extends BaseMediaSource
       return;
     }
     long nextLoadTimestamp = manifestLoadStartTimestamp + MINIMUM_MANIFEST_REFRESH_PERIOD_MS;
-    long delayUntilNextLoad = Math.max(0, nextLoadTimestamp - SystemClock.elapsedRealtime());
+    long delayUntilNextLoad = max(0, nextLoadTimestamp - SystemClock.elapsedRealtime());
     manifestRefreshHandler.postDelayed(this::startLoadingManifest, delayUntilNextLoad);
   }
 
   private void startLoadingManifest() {
+    if (manifestLoader.hasFatalError()) {
+      return;
+    }
     ParsingLoadable<SsManifest> loadable = new ParsingLoadable<>(manifestDataSource,
         manifestUri, C.DATA_TYPE_MANIFEST, manifestParser);
     long elapsedRealtimeMs =
         manifestLoader.startLoading(
             loadable, this, loadErrorHandlingPolicy.getMinimumLoadableRetryCount(loadable.type));
-    manifestEventDispatcher.loadStarted(loadable.dataSpec, loadable.type, elapsedRealtimeMs);
+    manifestEventDispatcher.loadStarted(
+        new LoadEventInfo(loadable.loadTaskId, loadable.dataSpec, elapsedRealtimeMs),
+        loadable.type);
   }
 
 }

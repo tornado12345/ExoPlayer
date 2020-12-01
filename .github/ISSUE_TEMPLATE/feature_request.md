@@ -8,8 +8,9 @@ assignees: ''
 
 Before filing a feature request:
 -----------------------
-- Search existing open issues, specifically with the label ‘enhancement’.
-- Search existing pull requests.
+- Search existing open issues, specifically with the label ‘enhancement’:
+  https://github.com/google/ExoPlayer/labels/enhancement
+- Search existing pull requests: https://github.com/google/ExoPlayer/pulls
 
 When filing a feature request:
 -----------------------
@@ -27,8 +28,3 @@ A clear and concise description of your proposed solution, if you have one.
 ### Alternatives considered
 A clear and concise description of any alternative solutions you considered,
 if applicable.
-
-<!-- DO NOT DELETE
-validate_template=true
-template_path=.github/ISSUE_TEMPLATE/feature_request.md
--->

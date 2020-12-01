@@ -15,8 +15,10 @@
  */
 package com.google.android.exoplayer2;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.util.Util;
+import java.util.Collections;
+import java.util.List;
 
 /** Abstract base {@link Player} which implements common implementation independent methods. */
 public abstract class BasePlayer implements Player {
@@ -25,6 +27,65 @@ public abstract class BasePlayer implements Player {
 
   public BasePlayer() {
     window = new Timeline.Window();
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem) {
+    setMediaItems(Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, long startPositionMs) {
+    setMediaItems(Collections.singletonList(mediaItem), /* startWindowIndex= */ 0, startPositionMs);
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, boolean resetPosition) {
+    setMediaItems(Collections.singletonList(mediaItem), resetPosition);
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems) {
+    setMediaItems(mediaItems, /* resetPosition= */ true);
+  }
+
+  @Override
+  public void addMediaItem(int index, MediaItem mediaItem) {
+    addMediaItems(index, Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void addMediaItem(MediaItem mediaItem) {
+    addMediaItems(Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void moveMediaItem(int currentIndex, int newIndex) {
+    if (currentIndex != newIndex) {
+      moveMediaItems(/* fromIndex= */ currentIndex, /* toIndex= */ currentIndex + 1, newIndex);
+    }
+  }
+
+  @Override
+  public void removeMediaItem(int index) {
+    removeMediaItems(/* fromIndex= */ index, /* toIndex= */ index + 1);
+  }
+
+  @Override
+  public final void play() {
+    setPlayWhenReady(true);
+  }
+
+  @Override
+  public final void pause() {
+    setPlayWhenReady(false);
+  }
+
+  @Override
+  public final boolean isPlaying() {
+    return getPlaybackState() == Player.STATE_READY
+        && getPlayWhenReady()
+        && getPlaybackSuppressionReason() == PLAYBACK_SUPPRESSION_REASON_NONE;
   }
 
   @Override
@@ -91,14 +152,48 @@ public abstract class BasePlayer implements Player {
             getCurrentWindowIndex(), getRepeatModeForNavigation(), getShuffleModeEnabled());
   }
 
+  /**
+   * @deprecated Use {@link #getCurrentMediaItem()} and {@link MediaItem.PlaybackProperties#tag}
+   *     instead.
+   */
+  @Deprecated
   @Override
   @Nullable
   public final Object getCurrentTag() {
-    int windowIndex = getCurrentWindowIndex();
     Timeline timeline = getCurrentTimeline();
-    return windowIndex >= timeline.getWindowCount()
+    if (timeline.isEmpty()) {
+      return null;
+    }
+    @Nullable
+    MediaItem.PlaybackProperties playbackProperties =
+        timeline.getWindow(getCurrentWindowIndex(), window).mediaItem.playbackProperties;
+    return playbackProperties != null ? playbackProperties.tag : null;
+  }
+
+  @Override
+  @Nullable
+  public final MediaItem getCurrentMediaItem() {
+    Timeline timeline = getCurrentTimeline();
+    return timeline.isEmpty()
         ? null
-        : timeline.getWindow(windowIndex, window, /* setTag= */ true).tag;
+        : timeline.getWindow(getCurrentWindowIndex(), window).mediaItem;
+  }
+
+  @Override
+  public int getMediaItemCount() {
+    return getCurrentTimeline().getWindowCount();
+  }
+
+  @Override
+  public MediaItem getMediaItemAt(int index) {
+    return getCurrentTimeline().getWindow(index, window).mediaItem;
+  }
+
+  @Override
+  @Nullable
+  public final Object getCurrentManifest() {
+    Timeline timeline = getCurrentTimeline();
+    return timeline.isEmpty() ? null : timeline.getWindow(getCurrentWindowIndex(), window).manifest;
   }
 
   @Override
@@ -114,6 +209,25 @@ public abstract class BasePlayer implements Player {
   public final boolean isCurrentWindowDynamic() {
     Timeline timeline = getCurrentTimeline();
     return !timeline.isEmpty() && timeline.getWindow(getCurrentWindowIndex(), window).isDynamic;
+  }
+
+  @Override
+  public final boolean isCurrentWindowLive() {
+    Timeline timeline = getCurrentTimeline();
+    return !timeline.isEmpty() && timeline.getWindow(getCurrentWindowIndex(), window).isLive;
+  }
+
+  @Override
+  public final long getCurrentLiveOffset() {
+    Timeline timeline = getCurrentTimeline();
+    if (timeline.isEmpty()) {
+      return C.TIME_UNSET;
+    }
+    long windowStartTimeMs = timeline.getWindow(getCurrentWindowIndex(), window).windowStartTimeMs;
+    if (windowStartTimeMs == C.TIME_UNSET) {
+      return C.TIME_UNSET;
+    }
+    return window.getCurrentUnixTimeMs() - window.windowStartTimeMs - getContentPosition();
   }
 
   @Override
@@ -134,5 +248,59 @@ public abstract class BasePlayer implements Player {
   private int getRepeatModeForNavigation() {
     @RepeatMode int repeatMode = getRepeatMode();
     return repeatMode == REPEAT_MODE_ONE ? REPEAT_MODE_OFF : repeatMode;
+  }
+
+  /** Holds a listener reference. */
+  protected static final class ListenerHolder {
+
+    /**
+     * The listener on which {link #invoke} will execute {@link ListenerInvocation listener
+     * invocations}.
+     */
+    public final Player.EventListener listener;
+
+    private boolean released;
+
+    public ListenerHolder(Player.EventListener listener) {
+      this.listener = listener;
+    }
+
+    /** Prevents any further {@link ListenerInvocation} to be executed on {@link #listener}. */
+    public void release() {
+      released = true;
+    }
+
+    /**
+     * Executes the given {@link ListenerInvocation} on {@link #listener}. Does nothing if {@link
+     * #release} has been called on this instance.
+     */
+    public void invoke(ListenerInvocation listenerInvocation) {
+      if (!released) {
+        listenerInvocation.invokeListener(listener);
+      }
+    }
+
+    @Override
+    public boolean equals(@Nullable Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (other == null || getClass() != other.getClass()) {
+        return false;
+      }
+      return listener.equals(((ListenerHolder) other).listener);
+    }
+
+    @Override
+    public int hashCode() {
+      return listener.hashCode();
+    }
+  }
+
+  /** Parameterized invocation of a {@link Player.EventListener} method. */
+  protected interface ListenerInvocation {
+
+    /** Executes the invocation on the given {@link Player.EventListener}. */
+    void invokeListener(Player.EventListener listener);
   }
 }

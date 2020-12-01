@@ -1,7 +1,10 @@
 # ExoPlayer Firebase JobDispatcher extension #
 
+**This extension is deprecated. Use the [WorkManager extension][] instead.**
+
 This extension provides a Scheduler implementation which uses [Firebase JobDispatcher][].
 
+[WorkManager extension]: https://github.com/google/ExoPlayer/blob/release-v2/extensions/workmanager/README.md
 [Firebase JobDispatcher]: https://github.com/firebase/firebase-jobdispatcher-android
 
 ## Getting the extension ##
@@ -20,4 +23,3 @@ locally. Instructions for doing this can be found in ExoPlayer's
 [top level README][].
 
 [top level README]: https://github.com/google/ExoPlayer/blob/release-v2/README.md
-

@@ -21,6 +21,8 @@ import static java.util.Arrays.copyOfRange;
 
 import android.content.Context;
 import android.net.Uri;
+import androidx.test.core.app.ApplicationProvider;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.testutil.FakeDataSource;
 import com.google.android.exoplayer2.testutil.TestUtil;
@@ -37,38 +39,33 @@ import java.io.IOException;
 import java.util.Random;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.RuntimeEnvironment;
 
-/**
- * Additional tests for {@link CacheDataSource}.
- */
-@RunWith(RobolectricTestRunner.class)
+/** Additional tests for {@link CacheDataSource}. */
+@RunWith(AndroidJUnit4.class)
 public final class CacheDataSourceTest2 {
 
   private static final String EXO_CACHE_DIR = "exo";
   private static final int EXO_CACHE_MAX_FILESIZE = 128;
 
   private static final Uri URI = Uri.parse("http://test.com/content");
-  private static final String KEY = "key";
   private static final byte[] DATA = TestUtil.buildTestData(8 * EXO_CACHE_MAX_FILESIZE + 1);
 
   // A DataSpec that covers the full file.
-  private static final DataSpec FULL = new DataSpec(URI, 0, DATA.length, KEY);
+  private static final DataSpec FULL = new DataSpec(URI, 0, DATA.length);
 
   private static final int OFFSET_ON_BOUNDARY = EXO_CACHE_MAX_FILESIZE;
   // A DataSpec that starts at 0 and extends to a cache file boundary.
-  private static final DataSpec END_ON_BOUNDARY = new DataSpec(URI, 0, OFFSET_ON_BOUNDARY, KEY);
+  private static final DataSpec END_ON_BOUNDARY = new DataSpec(URI, 0, OFFSET_ON_BOUNDARY);
   // A DataSpec that starts on the same boundary and extends to the end of the file.
-  private static final DataSpec START_ON_BOUNDARY = new DataSpec(URI, OFFSET_ON_BOUNDARY,
-      DATA.length - OFFSET_ON_BOUNDARY, KEY);
+  private static final DataSpec START_ON_BOUNDARY =
+      new DataSpec(URI, OFFSET_ON_BOUNDARY, DATA.length - OFFSET_ON_BOUNDARY);
 
   private static final int OFFSET_OFF_BOUNDARY = EXO_CACHE_MAX_FILESIZE * 2 + 1;
   // A DataSpec that starts at 0 and extends to just past a cache file boundary.
-  private static final DataSpec END_OFF_BOUNDARY = new DataSpec(URI, 0, OFFSET_OFF_BOUNDARY, KEY);
+  private static final DataSpec END_OFF_BOUNDARY = new DataSpec(URI, 0, OFFSET_OFF_BOUNDARY);
   // A DataSpec that starts on the same boundary and extends to the end of the file.
-  private static final DataSpec START_OFF_BOUNDARY = new DataSpec(URI, OFFSET_OFF_BOUNDARY,
-      DATA.length - OFFSET_OFF_BOUNDARY, KEY);
+  private static final DataSpec START_OFF_BOUNDARY =
+      new DataSpec(URI, OFFSET_OFF_BOUNDARY, DATA.length - OFFSET_OFF_BOUNDARY);
 
   @Test
   public void testWithoutEncryption() throws IOException {
@@ -83,7 +80,8 @@ public final class CacheDataSourceTest2 {
   private void testReads(boolean useEncryption) throws IOException {
     FakeDataSource upstreamSource = buildFakeUpstreamSource();
     CacheDataSource source =
-        buildCacheDataSource(RuntimeEnvironment.application, upstreamSource, useEncryption);
+        buildCacheDataSource(
+            ApplicationProvider.getApplicationContext(), upstreamSource, useEncryption);
     // First read, should arrive from upstream.
     testRead(END_ON_BOUNDARY, source);
     assertSingleOpen(upstreamSource, 0, OFFSET_ON_BOUNDARY);
@@ -113,7 +111,7 @@ public final class CacheDataSourceTest2 {
     byte[] scratch = new byte[4096];
     Random random = new Random(0);
     source.open(dataSpec);
-    int position = (int) dataSpec.absoluteStreamPosition;
+    int position = (int) dataSpec.position;
     int bytesRead = 0;
     while (bytesRead != C.RESULT_END_OF_INPUT) {
       int maxBytesToRead = random.nextInt(scratch.length) + 1;
@@ -135,7 +133,6 @@ public final class CacheDataSourceTest2 {
     DataSpec[] openedDataSpecs = upstreamSource.getAndClearOpenedDataSpecs();
     assertThat(openedDataSpecs).hasLength(1);
     assertThat(openedDataSpecs[0].position).isEqualTo(start);
-    assertThat(openedDataSpecs[0].absoluteStreamPosition).isEqualTo(start);
     assertThat(openedDataSpecs[0].length).isEqualTo(end - start);
   }
 
@@ -156,7 +153,11 @@ public final class CacheDataSourceTest2 {
   private static CacheDataSource buildCacheDataSource(Context context, DataSource upstreamSource,
       boolean useAesEncryption) throws CacheException {
     File cacheDir = context.getExternalCacheDir();
-    Cache cache = new SimpleCache(new File(cacheDir, EXO_CACHE_DIR), new NoOpCacheEvictor());
+    Cache cache =
+        new SimpleCache(
+            new File(cacheDir, EXO_CACHE_DIR),
+            new NoOpCacheEvictor(),
+            TestUtil.getInMemoryDatabaseProvider());
     emptyCache(cache);
 
     // Source and cipher
@@ -179,13 +180,13 @@ public final class CacheDataSourceTest2 {
         null); // eventListener
   }
 
-  private static void emptyCache(Cache cache) throws CacheException {
+  private static void emptyCache(Cache cache) {
     for (String key : cache.getKeys()) {
       for (CacheSpan span : cache.getCachedSpans(key)) {
         cache.removeSpan(span);
       }
     }
-    // Sanity check that the cache really is empty now.
+    // Check that the cache really is empty now.
     assertThat(cache.getKeys().isEmpty()).isTrue();
   }
 

@@ -16,7 +16,9 @@
 package com.google.android.exoplayer2.upstream.crypto;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.lang.Math.min;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.Util;
 import java.util.Random;
@@ -25,12 +27,9 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
-/**
- * Unit tests for {@link AesFlushingCipher}.
- */
-@RunWith(RobolectricTestRunner.class)
+/** Unit tests for {@link AesFlushingCipher}. */
+@RunWith(AndroidJUnit4.class)
 public class AesFlushingCipherTest {
 
   private static final int DATA_LENGTH = 65536;
@@ -78,7 +77,7 @@ public class AesFlushingCipherTest {
 
   // Test a single encrypt and decrypt call.
   @Test
-  public void testSingle() {
+  public void single() {
     byte[] reference = TestUtil.buildTestData(DATA_LENGTH);
     byte[] data = reference.clone();
 
@@ -94,7 +93,7 @@ public class AesFlushingCipherTest {
 
   // Test several encrypt and decrypt calls, each aligned on a 16 byte block size.
   @Test
-  public void testAligned() {
+  public void aligned() {
     byte[] reference = TestUtil.buildTestData(DATA_LENGTH);
     byte[] data = reference.clone();
     Random random = new Random(RANDOM_SEED);
@@ -102,7 +101,7 @@ public class AesFlushingCipherTest {
     int offset = 0;
     while (offset < data.length) {
       int bytes = (1 + random.nextInt(50)) * 16;
-      bytes = Math.min(bytes, data.length - offset);
+      bytes = min(bytes, data.length - offset);
       assertThat(bytes % 16).isEqualTo(0);
       encryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
@@ -115,7 +114,7 @@ public class AesFlushingCipherTest {
     offset = 0;
     while (offset < data.length) {
       int bytes = (1 + random.nextInt(50)) * 16;
-      bytes = Math.min(bytes, data.length - offset);
+      bytes = min(bytes, data.length - offset);
       assertThat(bytes % 16).isEqualTo(0);
       decryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
@@ -127,7 +126,7 @@ public class AesFlushingCipherTest {
 
   // Test several encrypt and decrypt calls, not aligned on block boundary.
   @Test
-  public void testUnAligned() {
+  public void unAligned() {
     byte[] reference = TestUtil.buildTestData(DATA_LENGTH);
     byte[] data = reference.clone();
     Random random = new Random(RANDOM_SEED);
@@ -136,7 +135,7 @@ public class AesFlushingCipherTest {
     int offset = 0;
     while (offset < data.length) {
       int bytes = 1 + random.nextInt(4095);
-      bytes = Math.min(bytes, data.length - offset);
+      bytes = min(bytes, data.length - offset);
       encryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
     }
@@ -148,7 +147,7 @@ public class AesFlushingCipherTest {
     offset = 0;
     while (offset < data.length) {
       int bytes = 1 + random.nextInt(4095);
-      bytes = Math.min(bytes, data.length - offset);
+      bytes = min(bytes, data.length - offset);
       decryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
     }
@@ -159,7 +158,7 @@ public class AesFlushingCipherTest {
 
   // Test decryption starting from the middle of an encrypted block.
   @Test
-  public void testMidJoin() {
+  public void midJoin() {
     byte[] reference = TestUtil.buildTestData(DATA_LENGTH);
     byte[] data = reference.clone();
     Random random = new Random(RANDOM_SEED);
@@ -168,7 +167,7 @@ public class AesFlushingCipherTest {
     int offset = 0;
     while (offset < data.length) {
       int bytes = 1 + random.nextInt(4095);
-      bytes = Math.min(bytes, data.length - offset);
+      bytes = min(bytes, data.length - offset);
       encryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
     }
@@ -187,7 +186,7 @@ public class AesFlushingCipherTest {
     // Decrypt
     while (remainingLength > 0) {
       int bytes = 1 + random.nextInt(4095);
-      bytes = Math.min(bytes, remainingLength);
+      bytes = min(bytes, remainingLength);
       decryptCipher.updateInPlace(data, offset, bytes);
       offset += bytes;
       remainingLength -= bytes;

@@ -16,7 +16,7 @@
 package com.google.android.exoplayer2.upstream;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
@@ -45,6 +45,7 @@ public final class TeeDataSource implements DataSource {
 
   @Override
   public void addTransferListener(TransferListener transferListener) {
+    Assertions.checkNotNull(transferListener);
     upstream.addTransferListener(transferListener);
   }
 
@@ -80,7 +81,8 @@ public final class TeeDataSource implements DataSource {
   }
 
   @Override
-  public @Nullable Uri getUri() {
+  @Nullable
+  public Uri getUri() {
     return upstream.getUri();
   }
 
